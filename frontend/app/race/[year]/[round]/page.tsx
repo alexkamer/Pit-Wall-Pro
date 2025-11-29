@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { ArrowLeft, Trophy, Timer, Flag, MapPin, Calendar } from 'lucide-react';
 import { useRaceResults, useQualifyingResults } from '@/hooks/use-race-results';
 import { useLapTimes } from '@/hooks/use-lap-times';
@@ -54,6 +55,101 @@ export default function RaceDetailsPage() {
         ? prev.filter((d) => d !== abbreviation)
         : [...prev, abbreviation]
     );
+  };
+
+  const formatQualifyingTime = (time: string | undefined): string => {
+    if (!time) return '-';
+
+    const timeStr = String(time);
+
+    // If already formatted (contains colon), return as-is
+    if (timeStr.includes(':')) {
+      return timeStr;
+    }
+
+    // Parse as seconds
+    const totalSeconds = parseFloat(timeStr);
+    if (isNaN(totalSeconds)) {
+      return timeStr;
+    }
+
+    // Format as MM:SS.mmm
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = Math.floor(totalSeconds % 60);
+    const milliseconds = Math.floor((totalSeconds % 1) * 1000);
+
+    return `${minutes}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
+  };
+
+  const getDriverPhoto = (result: any): string => {
+    if (result.HeadshotUrl) {
+      return result.HeadshotUrl;
+    }
+    const abbr = result.Abbreviation || result.Driver || 'DRV';
+    return `https://ui-avatars.com/api/?name=${abbr}&background=random&size=128`;
+  };
+
+  const getTeamLogo = (teamName: string): string => {
+    const teamMap: Record<string, string> = {
+      'Red Bull Racing': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/red-bull-racing-logo.png',
+      'Ferrari': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/ferrari-logo.png',
+      'Mercedes': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/mercedes-logo.png',
+      'McLaren': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/mclaren-logo.png',
+      'Aston Martin': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/aston-martin-logo.png',
+      'Alpine': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/alpine-logo.png',
+      'Williams': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/williams-logo.png',
+      'RB': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/rb-logo.png',
+      'Racing Bulls': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/rb-logo.png',
+      'Kick Sauber': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/kick-sauber-logo.png',
+      'Haas F1 Team': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/haas-f1-team-logo.png',
+    };
+    return teamMap[teamName] || '';
+  };
+
+  const getTeamColor = (teamName: string): string => {
+    // Official F1 team colors
+    const teamColors: Record<string, string> = {
+      'Red Bull Racing': '#3671C6',      // Red Bull Blue
+      'Ferrari': '#E8002D',               // Ferrari Red
+      'Mercedes': '#27F4D2',              // Mercedes Teal/Turquoise
+      'McLaren': '#FF8000',               // McLaren Orange
+      'Aston Martin': '#229971',          // Aston Martin Green
+      'Alpine': '#FF87BC',                // Alpine Pink
+      'Williams': '#64C4FF',              // Williams Blue
+      'RB': '#6692FF',                    // RB/AlphaTauri Blue
+      'Racing Bulls': '#6692FF',          // Racing Bulls Blue
+      'Kick Sauber': '#52E252',           // Sauber Green
+      'Haas F1 Team': '#B6BABD',          // Haas Grey/White
+    };
+    return teamColors[teamName] || '#888888';
+  };
+
+  const parseTimeToSeconds = (time: string | undefined): number | null => {
+    if (!time || time === 'NaT' || time === '-') return null;
+    const timeStr = String(time);
+
+    // If already in MM:SS.mmm format
+    if (timeStr.includes(':')) {
+      const parts = timeStr.split(':');
+      const minutes = parseInt(parts[0]);
+      const seconds = parseFloat(parts[1]);
+      return minutes * 60 + seconds;
+    }
+
+    // If in seconds
+    const totalSeconds = parseFloat(timeStr);
+    return isNaN(totalSeconds) ? null : totalSeconds;
+  };
+
+  const getGapToPole = (time: string | undefined, poleTime: string | undefined): string => {
+    const currentSeconds = parseTimeToSeconds(time);
+    const poleSeconds = parseTimeToSeconds(poleTime);
+
+    if (!currentSeconds || !poleSeconds) return '';
+    if (currentSeconds === poleSeconds) return '';
+
+    const gap = currentSeconds - poleSeconds;
+    return `+${gap.toFixed(3)}`;
   };
 
   const formattedDate = useMemo(() => {
@@ -303,8 +399,29 @@ export default function RaceDetailsPage() {
                   <TableBody>
                     {qualifyingData.results.map((result: any, index: number) => {
                       const position = result.Position || index + 1;
+                      const driverPhoto = getDriverPhoto(result);
+                      const teamName = result.TeamName || result.Team || '';
+                      const teamLogo = getTeamLogo(teamName);
+                      const teamColor = getTeamColor(teamName);
+
+                      // Determine fastest times for highlighting
+                      const fastestQ1 = qualifyingData.results[0]?.Q1;
+                      const fastestQ2 = qualifyingData.results.filter((r: any) => r.Q2 && r.Q2 !== 'NaT').sort((a: any, b: any) => parseTimeToSeconds(a.Q2)! - parseTimeToSeconds(b.Q2)!)[0]?.Q2;
+                      const fastestQ3 = qualifyingData.results.filter((r: any) => r.Q3 && r.Q3 !== 'NaT').sort((a: any, b: any) => parseTimeToSeconds(a.Q3)! - parseTimeToSeconds(b.Q3)!)[0]?.Q3;
+
+                      const isQ1Fastest = result.Q1 === fastestQ1 && result.Q1 && result.Q1 !== 'NaT';
+                      const isQ2Fastest = result.Q2 === fastestQ2 && result.Q2 && result.Q2 !== 'NaT';
+                      const isQ3Fastest = result.Q3 === fastestQ3 && result.Q3 && result.Q3 !== 'NaT';
+
+                      // Determine elimination session
+                      const eliminatedInQ1 = position > 15;
+                      const eliminatedInQ2 = position > 10 && position <= 15;
+
                       return (
-                        <TableRow key={result.DriverNumber || index}>
+                        <TableRow
+                          key={result.DriverNumber || index}
+                          className={eliminatedInQ1 ? 'opacity-60' : eliminatedInQ2 ? 'opacity-75' : ''}
+                        >
                           <TableCell>
                             <Badge
                               variant={position <= 3 ? 'default' : 'outline'}
@@ -321,20 +438,67 @@ export default function RaceDetailsPage() {
                               {position}
                             </Badge>
                           </TableCell>
-                          <TableCell className="font-bold text-lg">
-                            {result.Abbreviation || result.Driver}
+                          <TableCell>
+                            <div className="flex items-center gap-3">
+                              <Avatar className="h-12 w-12 border-2">
+                                <AvatarImage src={driverPhoto} alt={result.Abbreviation} />
+                                <AvatarFallback>{result.Abbreviation}</AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <div className="font-bold text-lg">{result.Abbreviation || result.Driver}</div>
+                                <div className="text-sm text-muted-foreground">{result.FullName || result.Driver}</div>
+                              </div>
+                            </div>
                           </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {result.TeamName || result.Team}
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              {teamLogo && (
+                                <div
+                                  className="h-8 w-8 rounded flex items-center justify-center p-1"
+                                  style={{ backgroundColor: teamColor }}
+                                >
+                                  <img
+                                    src={teamLogo}
+                                    alt={teamName}
+                                    className="h-full w-full object-contain brightness-0 invert"
+                                  />
+                                </div>
+                              )}
+                              <span className="text-muted-foreground">{teamName}</span>
+                            </div>
                           </TableCell>
-                          <TableCell className="text-right font-mono font-semibold">
-                            {result.Q1 || '-'}
+                          <TableCell className="text-right">
+                            <div className="font-mono font-semibold">
+                              <div className={isQ1Fastest ? 'text-purple-600 font-bold' : ''}>
+                                {formatQualifyingTime(result.Q1)}
+                              </div>
+                              {position === 1 && result.Q1 && result.Q1 !== 'NaT' && (
+                                <div className="text-xs text-muted-foreground">Pole</div>
+                              )}
+                              {position > 1 && result.Q1 && result.Q1 !== 'NaT' && (
+                                <div className="text-xs text-muted-foreground">{getGapToPole(result.Q1, fastestQ1)}</div>
+                              )}
+                            </div>
                           </TableCell>
-                          <TableCell className="text-right font-mono font-semibold">
-                            {result.Q2 || '-'}
+                          <TableCell className="text-right">
+                            <div className="font-mono font-semibold">
+                              <div className={isQ2Fastest ? 'text-purple-600 font-bold' : ''}>
+                                {formatQualifyingTime(result.Q2)}
+                              </div>
+                              {position <= 15 && result.Q2 && result.Q2 !== 'NaT' && (
+                                <div className="text-xs text-muted-foreground">{getGapToPole(result.Q2, fastestQ2)}</div>
+                              )}
+                            </div>
                           </TableCell>
-                          <TableCell className="text-right font-mono font-semibold">
-                            {result.Q3 || '-'}
+                          <TableCell className="text-right">
+                            <div className="font-mono font-semibold">
+                              <div className={isQ3Fastest ? 'text-purple-600 font-bold' : ''}>
+                                {formatQualifyingTime(result.Q3)}
+                              </div>
+                              {position <= 10 && result.Q3 && result.Q3 !== 'NaT' && (
+                                <div className="text-xs text-muted-foreground">{getGapToPole(result.Q3, fastestQ3)}</div>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );

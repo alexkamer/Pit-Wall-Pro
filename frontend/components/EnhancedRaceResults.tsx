@@ -249,7 +249,7 @@ export function EnhancedRaceResults({ results, lapData }: EnhancedRaceResultsPro
         {/* Team - More Prominent */}
         <div className="flex items-center justify-center gap-3 mb-6 relative z-10">
           {teamLogo && (
-            <img src={teamLogo} alt={result.TeamName} className="h-6 object-contain brightness-0 invert drop-shadow-lg" />
+            <img src={teamLogo} alt={result.TeamName} className="h-8 object-contain drop-shadow-lg" />
           )}
           <span className="text-base font-bold text-white/95 drop-shadow-md">{result.TeamName || result.Team}</span>
         </div>
