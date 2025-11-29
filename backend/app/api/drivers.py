@@ -7,6 +7,71 @@ import pandas as pd
 router = APIRouter()
 
 
+@router.get("/drivers/{driver_name}/seasons")
+async def get_driver_seasons(driver_name: str):
+    """
+    Get list of seasons a driver participated in
+
+    Args:
+        driver_name: Driver name in URL format (e.g., 'max-verstappen')
+    """
+    try:
+        display_name = driver_name.replace('-', ' ').title()
+        current_year = pd.Timestamp.now().year
+
+        # Check FastF1 availability (2018-present)
+        seasons = []
+
+        # Try recent years with FastF1 (only check first completed race of each year)
+        for year in range(current_year, 2017, -1):
+            try:
+                schedule = fastf1.get_event_schedule(year)
+
+                # Find first completed race in this year
+                for _, event in schedule.iterrows():
+                    if pd.isna(event['EventDate']) or event['EventDate'] > pd.Timestamp.now():
+                        continue
+
+                    round_number = int(event['RoundNumber'])
+                    if round_number == 0:  # Skip testing events
+                        continue
+
+                    try:
+                        session = FastF1Service.get_session(year, round_number, 'R')
+                        results = session.results
+
+                        if results is not None and not results.empty:
+                            # Check if driver participated in this race
+                            for _, driver in results.iterrows():
+                                driver_full_name = f"{driver.get('FirstName', '')} {driver.get('LastName', '')}".strip()
+                                if driver_full_name.lower() == display_name.lower():
+                                    seasons.append(year)
+                                    break
+
+                        # Only check first race, then move to next year
+                        break
+                    except:
+                        # Try next race in this year
+                        continue
+            except:
+                continue
+
+        if not seasons:
+            raise HTTPException(status_code=404, detail=f"No seasons found for driver '{display_name}'")
+
+        return {
+            'driver_name': display_name,
+            'seasons': sorted(seasons, reverse=True),
+            'debut_year': min(seasons) if seasons else None,
+            'latest_year': max(seasons) if seasons else None
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch seasons: {str(e)}")
+
+
 @router.get("/drivers/{driver_name}")
 async def get_driver_details(driver_name: str, year: int = 2024):
     """
@@ -50,7 +115,7 @@ async def get_driver_details(driver_name: str, year: int = 2024):
                 continue
 
         if not abbreviation:
-            raise HTTPException(status_code=404, detail=f"Driver '{display_name}' not found")
+            raise HTTPException(status_code=404, detail=f"Driver '{display_name}' not found in {year} season")
 
         # Collect race results for this driver
         race_results = []

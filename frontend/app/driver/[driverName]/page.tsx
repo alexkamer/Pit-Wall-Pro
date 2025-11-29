@@ -1,20 +1,24 @@
 'use client';
 
+import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowLeft, Trophy, TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import { useDriverDetails } from '@/hooks/use-driver-details';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ArrowLeft, Trophy, TrendingUp, TrendingDown, Minus, Calendar } from 'lucide-react';
+import { useDriverDetails, useDriverSeasons } from '@/hooks/use-driver-details';
 
 export default function DriverPage() {
   const params = useParams();
   const router = useRouter();
   const driverName = params.driverName as string;
+  const [selectedYear, setSelectedYear] = useState<number>(2024);
 
-  const { data, isLoading, error } = useDriverDetails(driverName, 2024);
+  const { data: seasonsData, isLoading: seasonsLoading } = useDriverSeasons(driverName);
+  const { data, isLoading, error } = useDriverDetails(driverName, selectedYear);
 
   if (isLoading) {
     return (
@@ -76,7 +80,7 @@ export default function DriverPage() {
       </Button>
 
       {/* Driver Header */}
-      <div className="flex items-center gap-6">
+      <div className="flex items-start justify-between gap-6">
         <div className="flex-1">
           <h1 className="text-4xl font-black tracking-tight mb-2">
             {driver.name}
@@ -86,7 +90,30 @@ export default function DriverPage() {
             <span className="text-lg">#{driver.number}</span>
             <Badge variant="outline" className="text-lg px-3 py-1">{driver.abbreviation}</Badge>
           </div>
+          {seasonsData && seasonsData.seasons && seasonsData.seasons.length > 1 && (
+            <div className="mt-4 text-sm text-muted-foreground">
+              Career: {seasonsData.debut_year} - {seasonsData.latest_year}
+              {' '}({seasonsData.seasons.length} seasons)
+            </div>
+          )}
         </div>
+        {seasonsData && seasonsData.seasons && (
+          <div className="flex items-center gap-2">
+            <Calendar className="h-5 w-5 text-muted-foreground" />
+            <Select value={selectedYear.toString()} onValueChange={(value) => setSelectedYear(parseInt(value))}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue placeholder="Select season" />
+              </SelectTrigger>
+              <SelectContent>
+                {seasonsData.seasons.map((year: number) => (
+                  <SelectItem key={year} value={year.toString()}>
+                    {year} Season
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       {/* Season Stats Cards */}
@@ -149,7 +176,7 @@ export default function DriverPage() {
       {/* Race Results Table */}
       <Card>
         <CardHeader>
-          <CardTitle>2024 Season Results</CardTitle>
+          <CardTitle>{selectedYear} Season Results</CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
