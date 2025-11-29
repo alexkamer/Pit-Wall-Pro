@@ -133,10 +133,13 @@ export async function getConstructorRaceResults(year: number) {
   // Get all race events for the season from FastF1 schedule
   const schedule = await getSchedule(year);
 
-  // Create a map of race names by round number for fallback
-  const scheduleMap: Record<string, string> = {};
+  // Create a map of race names and countries by round number for fallback
+  const scheduleMap: Record<string, { name: string; country: string }> = {};
   schedule.forEach((race: any) => {
-    scheduleMap[race.RoundNumber.toString()] = race.EventName;
+    scheduleMap[race.RoundNumber.toString()] = {
+      name: race.EventName,
+      country: race.Country
+    };
   });
 
   // Fetch race-by-race data for each constructor
@@ -161,6 +164,7 @@ export async function getConstructorRaceResults(year: number) {
               const stats = await fetch(statsUrl).then(r => r.json());
 
               let eventName = 'Unknown';
+              let country = 'Unknown';
               try {
                 const eventUrl = item.event.$ref;
                 const event = await fetch(eventUrl).then(r => r.json());
@@ -168,8 +172,14 @@ export async function getConstructorRaceResults(year: number) {
               } catch (e) {
                 // If event fetch fails, use schedule as fallback
                 const roundNumber = (index + 1).toString();
-                eventName = scheduleMap[roundNumber] || `Round ${roundNumber}`;
+                const scheduleData = scheduleMap[roundNumber];
+                eventName = scheduleData?.name || `Round ${roundNumber}`;
+                country = scheduleData?.country || 'Unknown';
               }
+
+              // Always try to get country from schedule map since ESPN doesn't provide it
+              const roundNumber = (index + 1).toString();
+              country = scheduleMap[roundNumber]?.country || 'Unknown';
 
               const pointsStat = stats.splits.categories[0]?.stats?.find((s: any) => s.name === 'points');
               const points = pointsStat?.value || 0;
@@ -177,14 +187,17 @@ export async function getConstructorRaceResults(year: number) {
               return {
                 eventId: item.eventId,
                 eventName: eventName,
+                country: country,
                 points: points
               };
             } catch (e) {
               // Fallback to schedule name
               const roundNumber = (index + 1).toString();
+              const scheduleData = scheduleMap[roundNumber];
               return {
                 eventId: item.eventId,
-                eventName: scheduleMap[roundNumber] || `Round ${roundNumber}`,
+                eventName: scheduleData?.name || `Round ${roundNumber}`,
+                country: scheduleData?.country || 'Unknown',
                 points: 0
               };
             }

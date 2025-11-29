@@ -9,12 +9,54 @@ const constructorRaceResults = await getConstructorRaceResults(currentYear);
 // Sort by total points descending
 constructorRaceResults.sort((a, b) => b.totalPoints - a.totalPoints);
 
-// Get unique race names for table headers (from first team that has races)
-const raceNames = constructorRaceResults[0]?.raceResults.map(r => r.eventName) || [];
+// Get unique race names and countries for table headers (from first team that has races)
+const races = constructorRaceResults[0]?.raceResults.map(r => ({
+  name: r.eventName,
+  country: r.country
+})) || [];
+
+// Country to ISO code mapping for flag emojis
+const countryToCode: Record<string, string> = {
+  'Australia': 'AU',
+  'Austria': 'AT',
+  'Azerbaijan': 'AZ',
+  'Bahrain': 'BH',
+  'Belgium': 'BE',
+  'Brazil': 'BR',
+  'Canada': 'CA',
+  'China': 'CN',
+  'France': 'FR',
+  'Germany': 'DE',
+  'Hungary': 'HU',
+  'Italy': 'IT',
+  'Japan': 'JP',
+  'Mexico': 'MX',
+  'Monaco': 'MC',
+  'Netherlands': 'NL',
+  'Qatar': 'QA',
+  'Saudi Arabia': 'SA',
+  'Singapore': 'SG',
+  'Spain': 'ES',
+  'United Kingdom': 'GB',
+  'USA': 'US',
+  'United States': 'US',
+  'United Arab Emirates': 'AE'
+};
+
+// Convert country name to flag emoji
+const getCountryFlag = (country: string): string => {
+  const code = countryToCode[country];
+  if (!code) return '';
+
+  // Convert country code to flag emoji using regional indicator symbols
+  return String.fromCodePoint(
+    ...code.split('').map(char => 127397 + char.charCodeAt(0))
+  );
+};
 
 // Calculate cumulative standings after each race
 const calculateCumulativeStandings = () => {
-  const numRaces = raceNames.length;
+  const numRaces = races.length;
   const standings = [];
 
   for (let raceIndex = 0; raceIndex < numRaces; raceIndex++) {
@@ -128,10 +170,15 @@ const cumulativeStandings = calculateCumulativeStandings();
             <tr>
               <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-0 bg-gray-800 z-10 w-20">Pos</th>
               <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-[3.06rem] bg-gray-800 z-10 min-w-48">Team</th>
-              {raceNames.map((raceName) => (
-                <th class="px-3 py-3 text-center text-xs font-medium text-gray-400 uppercase whitespace-nowrap">{raceName}</th>
+              {races.map((race) => (
+                <th class="px-3 py-3 text-center text-xs font-medium text-gray-400 uppercase whitespace-nowrap">
+                  <div class="flex flex-col items-center gap-1">
+                    <span class="text-2xl">{getCountryFlag(race.country)}</span>
+                    <span>{race.name}</span>
+                  </div>
+                </th>
               ))}
-              <th class="px-3 py-3 text-right text-xs font-medium text-gray-400 uppercase sticky right-0 bg-gray-800/50">Total</th>
+              <th class="px-3 py-3 text-right text-xs font-medium text-gray-400 uppercase sticky right-0 bg-gray-800">Total</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-800">
@@ -159,7 +206,7 @@ const cumulativeStandings = calculateCumulativeStandings();
                     </td>
                   );
                 })}
-                <td class="px-3 py-3 text-right whitespace-nowrap sticky right-0 bg-gray-900/50">
+                <td class="px-3 py-3 text-right whitespace-nowrap sticky right-0 bg-gray-900">
                   <div class="font-bold text-lg">{team.totalPoints}</div>
                 </td>
               </tr>
