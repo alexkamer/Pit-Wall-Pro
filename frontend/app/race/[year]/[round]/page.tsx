@@ -420,7 +420,7 @@ export default function RaceDetailsPage() {
                       return (
                         <TableRow
                           key={result.DriverNumber || index}
-                          className={eliminatedInQ1 ? 'opacity-60' : eliminatedInQ2 ? 'opacity-75' : ''}
+                          className={eliminatedInQ1 ? 'opacity-85' : eliminatedInQ2 ? 'opacity-90' : ''}
                         >
                           <TableCell>
                             <Badge
