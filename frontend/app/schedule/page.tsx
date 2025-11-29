@@ -168,7 +168,7 @@ export default function SchedulePage() {
                   {isPastEvent && (
                     <div className="mt-4 pt-4 border-t">
                       <Button
-                        onClick={() => router.push(`/race/2025/${event.RoundNumber}`)}
+                        onClick={() => router.push(`/race/2025/${event.EventName.replace(/ /g, '_')}`)}
                         variant="outline"
                         className="w-full"
                       >

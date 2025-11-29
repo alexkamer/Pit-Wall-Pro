@@ -22,7 +22,8 @@ export default function RaceDetailsPage() {
   const params = useParams();
   const router = useRouter();
   const year = parseInt(params.year as string);
-  const round = params.round as string;
+  // Convert race name from URL format back to normal (e.g., "Bahrain_Grand_Prix" -> "Bahrain Grand Prix")
+  const round = (params.round as string).replace(/_/g, ' ');
 
   const { data: raceData, isLoading: raceLoading, error: raceError } = useRaceResults(year, round);
   const { data: qualifyingData, isLoading: qualifyingLoading, error: qualifyingError } = useQualifyingResults(year, round);
