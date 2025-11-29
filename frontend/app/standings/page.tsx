@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useDriverStandings, useConstructorStandings } from '@/hooks/use-standings';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -90,6 +91,7 @@ export default function StandingsPage() {
                       const rank = stats.find((s: any) => s.name === 'rank') || {};
                       const position = parseInt(rank.displayValue || (index + 1).toString());
                       const driverName = entry.athlete?.displayName || entry.athlete?.fullName || `Driver ${position}`;
+                      const driverSlug = driverName.toLowerCase().replace(/\s+/g, '-');
 
                       return (
                         <TableRow key={entry.athlete?.$ref || index}>
@@ -110,7 +112,12 @@ export default function StandingsPage() {
                             </Badge>
                           </TableCell>
                           <TableCell className="font-semibold">
-                            {driverName}
+                            <Link
+                              href={`/driver/${driverSlug}`}
+                              className="hover:text-[var(--f1-coral)] hover:underline transition-colors"
+                            >
+                              {driverName}
+                            </Link>
                           </TableCell>
                           <TableCell className="text-right font-bold">
                             {points.displayValue || '0'}

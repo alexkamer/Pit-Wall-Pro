@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config.settings import get_settings
-from .api import schedule, standings, session
+from .api import schedule, standings, session, drivers
 from .db.database import init_db
 import fastf1
 
@@ -33,6 +33,7 @@ app.add_middleware(
 app.include_router(schedule.router, prefix="/api", tags=["schedule"])
 app.include_router(standings.router, prefix="/api", tags=["standings"])
 app.include_router(session.router, prefix="/api", tags=["session"])
+app.include_router(drivers.router, prefix="/api", tags=["drivers"])
 
 
 @app.get("/")
