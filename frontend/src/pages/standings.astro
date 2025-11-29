@@ -67,7 +67,7 @@ const constructorStandings = await getConstructorStandings(currentYear);
           return (
             <div class="flex items-center gap-4 p-3 bg-gray-800/50 rounded">
               <div class="font-bold w-8">{index + 1}</div>
-              <div class="flex-1">Team {index + 1}</div>
+              <div class="flex-1">{team.teamName}</div>
               <div class="font-bold">{points} pts</div>
             </div>
           );

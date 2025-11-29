@@ -78,7 +78,35 @@ export async function getDriverStandings(year: number) {
 }
 
 export async function getConstructorStandings(year: number) {
-  return fetchAPI(`/espn/standings/${year}?type=constructor`);
+  const standings = await fetchAPI<any>(`/espn/standings/${year}?type=constructor`);
+
+  // Fetch manufacturer details for each standing
+  const standingsWithNames = await Promise.all(
+    standings.standings.map(async (standing: any) => {
+      const manufacturerRef = standing.manufacturer?.$ref || '';
+
+      try {
+        // Fetch manufacturer details directly from ESPN API
+        const manufacturer = await fetch(manufacturerRef).then(r => r.json());
+
+        return {
+          ...standing,
+          teamName: manufacturer.displayName || manufacturer.name || 'Unknown Team'
+        };
+      } catch (e) {
+        const manufacturerId = manufacturerRef.split('/').filter((s: string) => s).pop()?.split('?')[0];
+        return {
+          ...standing,
+          teamName: `Constructor ${manufacturerId}`
+        };
+      }
+    })
+  );
+
+  return {
+    ...standings,
+    standings: standingsWithNames
+  };
 }
 
 export async function getSchedule(year: number) {
