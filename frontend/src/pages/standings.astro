@@ -11,6 +11,52 @@ constructorRaceResults.sort((a, b) => b.totalPoints - a.totalPoints);
 
 // Get unique race names for table headers (from first team that has races)
 const raceNames = constructorRaceResults[0]?.raceResults.map(r => r.eventName) || [];
+
+// Calculate cumulative standings after each race
+const calculateCumulativeStandings = () => {
+  const numRaces = raceNames.length;
+  const standings = [];
+
+  for (let raceIndex = 0; raceIndex < numRaces; raceIndex++) {
+    // Calculate cumulative points for each team up to this race
+    const cumulativePoints = constructorRaceResults.map(team => ({
+      teamName: team.teamName,
+      points: team.raceResults.slice(0, raceIndex + 1).reduce((sum, race) => sum + race.points, 0)
+    }));
+
+    // Sort by cumulative points (descending) to get positions
+    cumulativePoints.sort((a, b) => b.points - a.points);
+
+    // Store positions for each team at this race, handling ties
+    const raceStandings = {};
+    let currentPosition = 1;
+
+    for (let i = 0; i < cumulativePoints.length; i++) {
+      const team = cumulativePoints[i];
+
+      // Check if this team is tied with the previous team
+      if (i > 0 && team.points === cumulativePoints[i - 1].points) {
+        // Same points as previous team - use same position with 'T' prefix
+        const prevPosition = raceStandings[cumulativePoints[i - 1].teamName];
+        // Remove 'T' if it exists to get the base position number
+        const basePosition = prevPosition.toString().replace('T', '');
+        raceStandings[team.teamName] = `T${basePosition}`;
+        // Also update previous team to show tie
+        raceStandings[cumulativePoints[i - 1].teamName] = `T${basePosition}`;
+      } else {
+        // Different points - use current position
+        raceStandings[team.teamName] = currentPosition;
+        currentPosition = i + 2; // Next position accounts for all teams processed so far
+      }
+    }
+
+    standings.push(raceStandings);
+  }
+
+  return standings;
+};
+
+const cumulativeStandings = calculateCumulativeStandings();
 ---
 
 <Layout title={`F1 Standings ${currentYear}`}>
@@ -65,13 +111,23 @@ const raceNames = constructorRaceResults[0]?.raceResults.map(r => r.eventName) |
     </div>
 
     <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
-      <h2 class="text-2xl font-bold mb-4">Constructor Standings - Points by Race</h2>
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-2xl font-bold">Constructor Standings - Points by Race</h2>
+        <label class="flex items-center gap-3 cursor-pointer">
+          <span class="text-sm text-gray-400">Show Positions</span>
+          <input
+            type="checkbox"
+            id="showPositions"
+            class="w-5 h-5 rounded bg-gray-800 border-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-2"
+          />
+        </label>
+      </div>
       <div class="overflow-x-auto">
-        <table class="w-full text-sm">
+        <table class="w-full text-sm border-collapse">
           <thead class="bg-gray-800/50 border-b border-gray-700">
             <tr>
-              <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-0 bg-gray-800/50">Pos</th>
-              <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-12 bg-gray-800/50">Team</th>
+              <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-0 bg-gray-800 z-10 w-20">Pos</th>
+              <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-[3.06rem] bg-gray-800 z-10 min-w-48">Team</th>
               {raceNames.map((raceName) => (
                 <th class="px-3 py-3 text-center text-xs font-medium text-gray-400 uppercase whitespace-nowrap">{raceName}</th>
               ))}
@@ -81,10 +137,10 @@ const raceNames = constructorRaceResults[0]?.raceResults.map(r => r.eventName) |
           <tbody class="divide-y divide-gray-800">
             {constructorRaceResults.map((team, index) => (
               <tr class="hover:bg-gray-800/30 transition-colors">
-                <td class="px-3 py-3 whitespace-nowrap sticky left-0 bg-gray-900/50">
+                <td class="px-3 py-3 whitespace-nowrap sticky left-0 bg-gray-900 z-10 w-20">
                   <div class="font-bold">{index + 1}</div>
                 </td>
-                <td class="px-3 py-3 whitespace-nowrap sticky left-12 bg-gray-900/50">
+                <td class="px-3 py-3 whitespace-nowrap sticky left-[3.06rem] bg-gray-900 z-10 min-w-48">
                   <div class="flex items-center gap-3">
                     {team.teamLogo && (
                       <img src={team.teamLogo} alt={team.teamName} class="h-8 w-auto object-contain" />
@@ -92,11 +148,17 @@ const raceNames = constructorRaceResults[0]?.raceResults.map(r => r.eventName) |
                     <div class="font-medium">{team.teamName}</div>
                   </div>
                 </td>
-                {team.raceResults.map((race) => (
-                  <td class="px-3 py-3 text-center whitespace-nowrap">
-                    {race.points > 0 ? race.points : '-'}
-                  </td>
-                ))}
+                {team.raceResults.map((race, raceIndex) => {
+                  const position = cumulativeStandings[raceIndex]?.[team.teamName];
+                  return (
+                    <td class="px-3 py-3 text-center whitespace-nowrap race-cell">
+                      <span class="points-value">{race.points > 0 ? race.points : '-'}</span>
+                      <span class="position-value hidden text-xs text-gray-500 ml-1">
+                        {position ? `(${position})` : ''}
+                      </span>
+                    </td>
+                  );
+                })}
                 <td class="px-3 py-3 text-right whitespace-nowrap sticky right-0 bg-gray-900/50">
                   <div class="font-bold text-lg">{team.totalPoints}</div>
                 </td>
@@ -108,3 +170,24 @@ const raceNames = constructorRaceResults[0]?.raceResults.map(r => r.eventName) |
     </div>
   </div>
 </Layout>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const toggleCheckbox = document.getElementById('showPositions') as HTMLInputElement;
+    const positionValues = document.querySelectorAll('.position-value');
+
+    if (toggleCheckbox) {
+      toggleCheckbox.addEventListener('change', (e) => {
+        const isChecked = (e.target as HTMLInputElement).checked;
+
+        positionValues.forEach((positionValue) => {
+          if (isChecked) {
+            positionValue.classList.remove('hidden');
+          } else {
+            positionValue.classList.add('hidden');
+          }
+        });
+      });
+    }
+  });
+</script>
