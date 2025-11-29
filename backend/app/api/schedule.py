@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from ..services.espn_service import espn_service
 from ..services.fastf1_service import fastf1_service
+from ..services.cache_service import cache_service
 
 router = APIRouter()
 
@@ -10,10 +11,20 @@ async def get_schedule(year: int = 2025):
     """
     Get race schedule for the season
 
-    Uses FastF1 for comprehensive schedule information
+    Uses FastF1 for comprehensive schedule information with SQLite caching
     """
     try:
+        # Try to get from cache first
+        cached_schedule = cache_service.get_event_schedule(year)
+        if cached_schedule:
+            return cached_schedule
+
+        # If not in cache, fetch from FastF1
         schedule = fastf1_service.get_event_schedule(year)
+
+        # Store in cache
+        cache_service.set_event_schedule(year, schedule)
+
         return schedule
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch schedule: {str(e)}")

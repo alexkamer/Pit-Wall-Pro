@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config.settings import get_settings
 from .api import schedule, standings, session
+from .db.database import init_db
 import fastf1
 
 settings = get_settings()
@@ -9,6 +10,9 @@ settings = get_settings()
 # Configure FastF1 cache
 if settings.fastf1_cache_enabled:
     fastf1.Cache.enable_cache(settings.fastf1_cache_dir)
+
+# Initialize SQLite database
+init_db()
 
 app = FastAPI(
     title=settings.app_name,
