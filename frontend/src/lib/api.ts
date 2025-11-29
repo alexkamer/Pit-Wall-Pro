@@ -127,6 +127,124 @@ const TEAM_LOGOS: Record<string, string> = {
   'Haas': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/haas-f1-team-logo.png'
 };
 
+export async function getDriverRaceResults(year: number) {
+  const standings = await fetchAPI<any>(`/espn/standings/${year}?type=driver`);
+
+  // Get all race events for the season from FastF1 schedule
+  const schedule = await getSchedule(year);
+
+  // Create a map of race names and countries by round number for fallback
+  const scheduleMap: Record<string, { name: string; country: string }> = {};
+  schedule.forEach((race: any) => {
+    scheduleMap[race.RoundNumber.toString()] = {
+      name: race.EventName,
+      country: race.Country
+    };
+  });
+
+  // Fetch race-by-race data for each driver
+  const driverData = await Promise.all(
+    standings.standings.map(async (standing: any) => {
+      const athleteRef = standing.athlete?.$ref || '';
+
+      try {
+        // Fetch driver details
+        const athlete = await fetch(athleteRef).then(r => r.json());
+        const driverName = athlete.displayName || athlete.fullName;
+        const driverAbbreviation = athlete.abbreviation;
+
+        // Fetch team name from FastF1
+        let teamName = 'Unknown Team';
+        try {
+          const latestRace = schedule.filter((r: any) => r.RoundNumber > 0).pop();
+          if (latestRace) {
+            const session = await fetchAPI<any>(`/fastf1/session/${year}/${latestRace.RoundNumber}/R`);
+            const driverResult = session.results?.find((r: any) => r.Abbreviation === driverAbbreviation);
+            if (driverResult) {
+              teamName = driverResult.TeamName;
+            }
+          }
+        } catch (e) {
+          // Fallback to unknown
+        }
+
+        // Fetch eventlog with race-by-race statistics
+        const eventLogUrl = athlete.eventLog.$ref;
+        const eventLog = await fetch(eventLogUrl).then(r => r.json());
+
+        // Fetch points for each race
+        const raceResults = await Promise.all(
+          eventLog.events.items.map(async (item: any, index: number) => {
+            try {
+              const statsUrl = item.statistics.$ref;
+              const stats = await fetch(statsUrl).then(r => r.json());
+
+              let eventName = 'Unknown';
+              let country = 'Unknown';
+              try {
+                const eventUrl = item.event.$ref;
+                const event = await fetch(eventUrl).then(r => r.json());
+                eventName = event.shortName || event.name;
+              } catch (e) {
+                // If event fetch fails, use schedule as fallback
+                const roundNumber = (index + 1).toString();
+                const scheduleData = scheduleMap[roundNumber];
+                eventName = scheduleData?.name || `Round ${roundNumber}`;
+                country = scheduleData?.country || 'Unknown';
+              }
+
+              // Always try to get country from schedule map since ESPN doesn't provide it
+              const roundNumber = (index + 1).toString();
+              country = scheduleMap[roundNumber]?.country || 'Unknown';
+
+              const pointsStat = stats.splits.categories[0]?.stats?.find((s: any) => s.name === 'championshipPts');
+              const points = pointsStat?.value || 0;
+
+              return {
+                eventId: item.eventId,
+                eventName: eventName,
+                country: country,
+                points: points
+              };
+            } catch (e) {
+              // Fallback to schedule name
+              const roundNumber = (index + 1).toString();
+              const scheduleData = scheduleMap[roundNumber];
+              return {
+                eventId: item.eventId,
+                eventName: scheduleData?.name || `Round ${roundNumber}`,
+                country: scheduleData?.country || 'Unknown',
+                points: 0
+              };
+            }
+          })
+        );
+
+        // Get total points
+        const totalPoints = standing.records[0]?.stats?.find((s: any) => s.name === 'championshipPts')?.value || 0;
+
+        return {
+          driverName,
+          driverAbbreviation,
+          teamName,
+          totalPoints,
+          raceResults
+        };
+      } catch (e) {
+        return {
+          driverName: 'Unknown Driver',
+          driverAbbreviation: '???',
+          teamName: 'Unknown Team',
+          totalPoints: 0,
+          raceResults: []
+        };
+      }
+    })
+  );
+
+  return driverData;
+}
+
 export async function getConstructorRaceResults(year: number) {
   const standings = await fetchAPI<any>(`/espn/standings/${year}?type=constructor`);
 

@@ -1,16 +1,23 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { getDriverStandings, getConstructorRaceResults } from '../lib/api';
+import { getDriverStandings, getDriverRaceResults, getConstructorRaceResults } from '../lib/api';
 
 const currentYear = 2025;
 const driverStandings = await getDriverStandings(currentYear);
+const driverRaceResults = await getDriverRaceResults(currentYear);
 const constructorRaceResults = await getConstructorRaceResults(currentYear);
 
 // Sort by total points descending
+driverRaceResults.sort((a, b) => b.totalPoints - a.totalPoints);
 constructorRaceResults.sort((a, b) => b.totalPoints - a.totalPoints);
 
-// Get unique race names and countries for table headers (from first team that has races)
+// Get unique race names and countries for table headers
 const races = constructorRaceResults[0]?.raceResults.map(r => ({
+  name: r.eventName,
+  country: r.country
+})) || [];
+
+const driverRaces = driverRaceResults[0]?.raceResults.map(r => ({
   name: r.eventName,
   country: r.country
 })) || [];
@@ -54,41 +61,33 @@ const getCountryFlag = (country: string): string => {
   );
 };
 
-// Calculate cumulative standings after each race
-const calculateCumulativeStandings = () => {
-  const numRaces = races.length;
+// Calculate cumulative standings after each race for drivers
+const calculateDriverCumulativeStandings = () => {
+  const numRaces = driverRaces.length;
   const standings = [];
 
   for (let raceIndex = 0; raceIndex < numRaces; raceIndex++) {
-    // Calculate cumulative points for each team up to this race
-    const cumulativePoints = constructorRaceResults.map(team => ({
-      teamName: team.teamName,
-      points: team.raceResults.slice(0, raceIndex + 1).reduce((sum, race) => sum + race.points, 0)
+    const cumulativePoints = driverRaceResults.map(driver => ({
+      driverKey: driver.driverAbbreviation,
+      points: driver.raceResults.slice(0, raceIndex + 1).reduce((sum, race) => sum + race.points, 0)
     }));
 
-    // Sort by cumulative points (descending) to get positions
     cumulativePoints.sort((a, b) => b.points - a.points);
 
-    // Store positions for each team at this race, handling ties
     const raceStandings = {};
     let currentPosition = 1;
 
     for (let i = 0; i < cumulativePoints.length; i++) {
-      const team = cumulativePoints[i];
+      const driver = cumulativePoints[i];
 
-      // Check if this team is tied with the previous team
-      if (i > 0 && team.points === cumulativePoints[i - 1].points) {
-        // Same points as previous team - use same position with 'T' prefix
-        const prevPosition = raceStandings[cumulativePoints[i - 1].teamName];
-        // Remove 'T' if it exists to get the base position number
+      if (i > 0 && driver.points === cumulativePoints[i - 1].points) {
+        const prevPosition = raceStandings[cumulativePoints[i - 1].driverKey];
         const basePosition = prevPosition.toString().replace('T', '');
-        raceStandings[team.teamName] = `T${basePosition}`;
-        // Also update previous team to show tie
-        raceStandings[cumulativePoints[i - 1].teamName] = `T${basePosition}`;
+        raceStandings[driver.driverKey] = `T${basePosition}`;
+        raceStandings[cumulativePoints[i - 1].driverKey] = `T${basePosition}`;
       } else {
-        // Different points - use current position
-        raceStandings[team.teamName] = currentPosition;
-        currentPosition = i + 2; // Next position accounts for all teams processed so far
+        raceStandings[driver.driverKey] = currentPosition;
+        currentPosition = i + 2;
       }
     }
 
@@ -98,7 +97,44 @@ const calculateCumulativeStandings = () => {
   return standings;
 };
 
-const cumulativeStandings = calculateCumulativeStandings();
+// Calculate cumulative standings after each race for constructors
+const calculateConstructorCumulativeStandings = () => {
+  const numRaces = races.length;
+  const standings = [];
+
+  for (let raceIndex = 0; raceIndex < numRaces; raceIndex++) {
+    const cumulativePoints = constructorRaceResults.map(team => ({
+      teamName: team.teamName,
+      points: team.raceResults.slice(0, raceIndex + 1).reduce((sum, race) => sum + race.points, 0)
+    }));
+
+    cumulativePoints.sort((a, b) => b.points - a.points);
+
+    const raceStandings = {};
+    let currentPosition = 1;
+
+    for (let i = 0; i < cumulativePoints.length; i++) {
+      const team = cumulativePoints[i];
+
+      if (i > 0 && team.points === cumulativePoints[i - 1].points) {
+        const prevPosition = raceStandings[cumulativePoints[i - 1].teamName];
+        const basePosition = prevPosition.toString().replace('T', '');
+        raceStandings[team.teamName] = `T${basePosition}`;
+        raceStandings[cumulativePoints[i - 1].teamName] = `T${basePosition}`;
+      } else {
+        raceStandings[team.teamName] = currentPosition;
+        currentPosition = i + 2;
+      }
+    }
+
+    standings.push(raceStandings);
+  }
+
+  return standings;
+};
+
+const driverCumulativeStandings = calculateDriverCumulativeStandings();
+const constructorCumulativeStandings = calculateConstructorCumulativeStandings();
 ---
 
 <Layout title={`F1 Standings ${currentYear}`}>
@@ -106,47 +142,62 @@ const cumulativeStandings = calculateCumulativeStandings();
     <h1 class="text-4xl font-bold mb-8">{currentYear} Championship Standings</h1>
 
     <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6 mb-8">
-      <h2 class="text-2xl font-bold mb-4">Driver Standings</h2>
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-2xl font-bold">Driver Standings - Points by Race</h2>
+        <label class="flex items-center gap-3 cursor-pointer">
+          <span class="text-sm text-gray-400">Show Positions</span>
+          <input
+            type="checkbox"
+            id="showDriverPositions"
+            class="w-5 h-5 rounded bg-gray-800 border-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-2"
+          />
+        </label>
+      </div>
       <div class="overflow-x-auto">
-        <table class="w-full">
+        <table class="w-full text-sm border-collapse">
           <thead class="bg-gray-800/50 border-b border-gray-700">
             <tr>
-              <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Pos</th>
-              <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Driver</th>
-              <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Team</th>
-              <th class="px-6 py-4 text-right text-xs font-medium text-gray-400 uppercase">Points</th>
-              <th class="px-6 py-4 text-right text-xs font-medium text-gray-400 uppercase">Wins</th>
+              <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-0 bg-gray-800 z-10 w-20">Pos</th>
+              <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-[3.06rem] bg-gray-800 z-10 min-w-48">Driver</th>
+              {driverRaces.map((race) => (
+                <th class="px-3 py-3 text-center text-xs font-medium text-gray-400 uppercase whitespace-nowrap">
+                  <div class="flex flex-col items-center gap-1">
+                    <span class="text-2xl">{getCountryFlag(race.country)}</span>
+                    <span>{race.name}</span>
+                  </div>
+                </th>
+              ))}
+              <th class="px-3 py-3 text-right text-xs font-medium text-gray-400 uppercase sticky right-0 bg-gray-800">Total</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-800">
-            {driverStandings.standings.map((driver, index) => {
-              const stats = driver.records[0]?.stats || [];
-              const points = stats.find(s => s.name === 'championshipPts')?.value || 0;
-              const wins = stats.find(s => s.name === 'wins')?.value || 0;
-              const rank = stats.find(s => s.name === 'rank')?.value || index + 1;
-              const details = driver.driverDetails;
-
-              return (
-                <tr class="hover:bg-gray-800/50 transition-colors">
-                  <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="text-lg font-bold">{rank}</div>
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="font-medium">{details?.name || `Driver ${index + 1}`}</div>
-                    <div class="text-sm text-gray-400">{details?.abbreviation || ''}</div>
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-gray-400">
-                    {details?.team || 'Unknown Team'}
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-right">
-                    <div class="text-xl font-bold">{points}</div>
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-right">
-                    <div class="text-lg">{wins}</div>
-                  </td>
-                </tr>
-              );
-            })}
+            {driverRaceResults.map((driver, index) => (
+              <tr class="hover:bg-gray-800/30 transition-colors">
+                <td class="px-3 py-3 whitespace-nowrap sticky left-0 bg-gray-900 z-10 w-20">
+                  <div class="font-bold">{index + 1}</div>
+                </td>
+                <td class="px-3 py-3 whitespace-nowrap sticky left-[3.06rem] bg-gray-900 z-10 min-w-48">
+                  <div class="flex flex-col">
+                    <div class="font-medium">{driver.driverName}</div>
+                    <div class="text-xs text-gray-500">{driver.teamName}</div>
+                  </div>
+                </td>
+                {driver.raceResults.map((race, raceIndex) => {
+                  const position = driverCumulativeStandings[raceIndex]?.[driver.driverAbbreviation];
+                  return (
+                    <td class="px-3 py-3 text-center whitespace-nowrap driver-race-cell">
+                      <span class="driver-points-value">{race.points > 0 ? race.points : '-'}</span>
+                      <span class="driver-position-value hidden text-xs text-gray-500 ml-1">
+                        {position ? `(${position})` : ''}
+                      </span>
+                    </td>
+                  );
+                })}
+                <td class="px-3 py-3 text-right whitespace-nowrap sticky right-0 bg-gray-900">
+                  <div class="font-bold text-lg">{driver.totalPoints}</div>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -196,11 +247,11 @@ const cumulativeStandings = calculateCumulativeStandings();
                   </div>
                 </td>
                 {team.raceResults.map((race, raceIndex) => {
-                  const position = cumulativeStandings[raceIndex]?.[team.teamName];
+                  const position = constructorCumulativeStandings[raceIndex]?.[team.teamName];
                   return (
-                    <td class="px-3 py-3 text-center whitespace-nowrap race-cell">
-                      <span class="points-value">{race.points > 0 ? race.points : '-'}</span>
-                      <span class="position-value hidden text-xs text-gray-500 ml-1">
+                    <td class="px-3 py-3 text-center whitespace-nowrap constructor-race-cell">
+                      <span class="constructor-points-value">{race.points > 0 ? race.points : '-'}</span>
+                      <span class="constructor-position-value hidden text-xs text-gray-500 ml-1">
                         {position ? `(${position})` : ''}
                       </span>
                     </td>
@@ -220,14 +271,33 @@ const cumulativeStandings = calculateCumulativeStandings();
 
 <script>
   document.addEventListener('DOMContentLoaded', () => {
-    const toggleCheckbox = document.getElementById('showPositions') as HTMLInputElement;
-    const positionValues = document.querySelectorAll('.position-value');
+    // Driver positions toggle
+    const driverToggleCheckbox = document.getElementById('showDriverPositions') as HTMLInputElement;
+    const driverPositionValues = document.querySelectorAll('.driver-position-value');
 
-    if (toggleCheckbox) {
-      toggleCheckbox.addEventListener('change', (e) => {
+    if (driverToggleCheckbox) {
+      driverToggleCheckbox.addEventListener('change', (e) => {
         const isChecked = (e.target as HTMLInputElement).checked;
 
-        positionValues.forEach((positionValue) => {
+        driverPositionValues.forEach((positionValue) => {
+          if (isChecked) {
+            positionValue.classList.remove('hidden');
+          } else {
+            positionValue.classList.add('hidden');
+          }
+        });
+      });
+    }
+
+    // Constructor positions toggle
+    const constructorToggleCheckbox = document.getElementById('showPositions') as HTMLInputElement;
+    const constructorPositionValues = document.querySelectorAll('.constructor-position-value');
+
+    if (constructorToggleCheckbox) {
+      constructorToggleCheckbox.addEventListener('change', (e) => {
+        const isChecked = (e.target as HTMLInputElement).checked;
+
+        constructorPositionValues.forEach((positionValue) => {
           if (isChecked) {
             positionValue.classList.remove('hidden');
           } else {
