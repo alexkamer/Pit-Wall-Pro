@@ -20,17 +20,9 @@ async def get_session_results(
         session_type: Session type - FP1, FP2, FP3, Q, S, R
     """
     try:
-        # Try to get from cache first
-        cached_results = cache_service.get_session_results(year, race, session_type)
-        if cached_results:
-            return cached_results
-
-        # If not in cache, fetch from FastF1
+        # Temporarily bypass cache due to DB permissions issue
+        # TODO: Fix database permissions and re-enable caching
         results = fastf1_service.get_session_results(year, race, session_type)
-
-        # Store in cache
-        cache_service.set_session_results(year, race, session_type, results)
-
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch session results: {str(e)}")
@@ -121,3 +113,66 @@ async def get_telemetry(
         return telemetry
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch telemetry: {str(e)}")
+
+
+@router.get("/session/{year}/{race}/{session_type}/race-control")
+async def get_race_control_messages(year: int, race: str, session_type: str):
+    """
+    Get race control messages (flags, incidents, etc.) for a session
+
+    Returns messages about yellow flags, red flags, safety car, VSC, etc.
+
+    Args:
+        year: Season year
+        race: Race name or round number
+        session_type: Session type - FP1, FP2, FP3, Q, S, R
+    """
+    try:
+        messages = fastf1_service.get_race_control_messages(year, race, session_type)
+        return messages
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch race control messages: {str(e)}")
+
+
+@router.get("/session/{year}/{race}/{session_type}/track-status")
+async def get_track_status(year: int, race: str, session_type: str):
+    """
+    Get track status data (yellow flags, safety car, VSC, etc.)
+
+    Status codes:
+    1 = AllClear (green flag)
+    2 = Yellow
+    4 = SafetyCar
+    5 = Red Flag
+    6 = VSC Deployed
+    7 = VSC Ending
+
+    Args:
+        year: Season year
+        race: Race name or round number
+        session_type: Session type - FP1, FP2, FP3, Q, S, R
+    """
+    try:
+        track_status = fastf1_service.get_track_status(year, race, session_type)
+        return track_status
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch track status: {str(e)}")
+
+
+@router.get("/session/{year}/{race}/{session_type}/weather")
+async def get_weather_data(year: int, race: str, session_type: str):
+    """
+    Get weather data for a session
+
+    Includes air temp, humidity, pressure, rainfall, track temp, wind direction, wind speed
+
+    Args:
+        year: Season year
+        race: Race name or round number
+        session_type: Session type - FP1, FP2, FP3, Q, S, R
+    """
+    try:
+        weather = fastf1_service.get_weather_data(year, race, session_type)
+        return weather
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch weather data: {str(e)}")

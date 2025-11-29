@@ -18,6 +18,7 @@ import { EnhancedRaceResults } from '@/components/EnhancedRaceResults';
 import { TrackMap } from '@/components/TrackMap';
 import { CountryFlag } from '@/components/CountryFlag';
 import { SectionHeader } from '@/components/SectionHeader';
+import { RaceEvents } from '@/components/RaceEvents';
 
 export default function RaceDetailsPage() {
   const params = useParams();
@@ -198,6 +199,11 @@ export default function RaceDetailsPage() {
         </TabsList>
 
         <TabsContent value="race" className="mt-8 space-y-8">
+          {/* Race Events (Flags & Weather) */}
+          {!raceLoading && !raceError && raceData?.results && (
+            <RaceEvents year={year} race={round} />
+          )}
+
           {/* Race Results */}
           <div>
             <SectionHeader title="Race Results" subtitle="Final classification and points scored" icon={Flag} />

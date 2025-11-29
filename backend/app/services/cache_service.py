@@ -35,11 +35,13 @@ class CacheService:
 
     @staticmethod
     def _sanitize_value(value):
-        """Convert pandas NaT and other problematic values to None"""
+        """Convert pandas NaT, empty strings, and other problematic values to None"""
         if pd.isna(value):
             return None
         if isinstance(value, pd.Timestamp):
             return value.to_pydatetime()
+        if isinstance(value, str) and value.strip() == '':
+            return None
         return value
 
     # Event Schedule Cache

@@ -163,6 +163,92 @@ class FastF1Service:
 
         return {"year": year, "events": schedule_dict}
 
+    @staticmethod
+    def get_race_control_messages(year: int, race: str | int, session_type: str) -> dict[str, Any]:
+        """
+        Get race control messages (flags, incidents, etc.) for a session
+
+        Returns messages about yellow flags, red flags, safety car, VSC, etc.
+        """
+        session = FastF1Service.get_session(year, race, session_type)
+
+        messages = session.race_control_messages
+        if messages is None or messages.empty:
+            return {"messages": []}
+
+        # Convert time columns to strings
+        messages_dict = messages.copy()
+        if 'Time' in messages_dict.columns:
+            messages_dict['Time'] = messages_dict['Time'].astype(str)
+
+        messages_dict = messages_dict.fillna("").to_dict(orient="records")
+
+        return {
+            "session_name": session.name,
+            "messages": messages_dict
+        }
+
+    @staticmethod
+    def get_track_status(year: int, race: str | int, session_type: str) -> dict[str, Any]:
+        """
+        Get track status data (yellow flags, safety car, VSC, etc.)
+
+        Status codes:
+        1 = AllClear (green flag)
+        2 = Yellow
+        4 = SafetyCar
+        5 = Red Flag
+        6 = VSC Deployed
+        7 = VSC Ending
+        """
+        session = FastF1Service.get_session(year, race, session_type)
+
+        track_status = session.track_status
+        if track_status is None or track_status.empty:
+            return {"track_status": []}
+
+        # Convert time to seconds for easier frontend processing
+        track_status_dict = track_status.copy()
+        if 'Time' in track_status_dict.columns:
+            track_status_dict['TimeSeconds'] = track_status_dict['Time'].dt.total_seconds()
+            track_status_dict['Time'] = track_status_dict['Time'].astype(str)
+
+        track_status_dict = track_status_dict.fillna("").to_dict(orient="records")
+
+        return {
+            "session_name": session.name,
+            "track_status": track_status_dict
+        }
+
+    @staticmethod
+    def get_weather_data(year: int, race: str | int, session_type: str) -> dict[str, Any]:
+        """
+        Get weather data for a session
+
+        Includes air temp, humidity, pressure, rainfall, track temp, wind direction, wind speed
+        """
+        session = FastF1Service.get_session(year, race, session_type)
+
+        weather = session.weather_data
+        if weather is None or weather.empty:
+            return {"weather": []}
+
+        # Convert time to seconds and sample data (take every 5 minutes ~300 seconds)
+        weather_dict = weather.copy()
+        if 'Time' in weather_dict.columns:
+            weather_dict['TimeSeconds'] = weather_dict['Time'].dt.total_seconds()
+            weather_dict['Time'] = weather_dict['Time'].astype(str)
+
+        # Sample to reduce data size - take one reading every ~5 minutes
+        weather_dict = weather_dict.iloc[::5]
+
+        weather_dict = weather_dict.fillna("").to_dict(orient="records")
+
+        return {
+            "session_name": session.name,
+            "weather": weather_dict
+        }
+
 
 # Singleton instance
 fastf1_service = FastF1Service()
