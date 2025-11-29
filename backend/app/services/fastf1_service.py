@@ -30,12 +30,28 @@ class FastF1Service:
         # Convert to dict and handle NaN values
         results_dict = results.fillna("").to_dict(orient="records")
 
+        # Get circuit info for track map
+        circuit_info = None
+        try:
+            circuit_data = session.get_circuit_info()
+            if circuit_data is not None and hasattr(circuit_data, 'corners'):
+                # Convert corner coordinates to list of dicts for JSON serialization
+                corners_df = circuit_data.corners
+                circuit_info = {
+                    "corners": corners_df[['X', 'Y']].to_dict(orient='records'),
+                    "rotation": float(circuit_data.rotation) if hasattr(circuit_data, 'rotation') else 0
+                }
+        except Exception as e:
+            print(f"Warning: Could not load circuit info: {e}")
+
         return {
             "session_name": session.name,
             "event_name": session.event['EventName'],
             "circuit": session.event['Location'],
+            "country": session.event['Country'],
             "date": str(session.date),
-            "results": results_dict
+            "results": results_dict,
+            "circuit_info": circuit_info
         }
 
     @staticmethod
@@ -58,7 +74,7 @@ class FastF1Service:
 
         # Select relevant columns
         lap_data = laps[['Driver', 'LapNumber', 'LapTime', 'Sector1Time',
-                        'Sector2Time', 'Sector3Time', 'Compound', 'TyreLife']].copy()
+                        'Sector2Time', 'Sector3Time', 'Compound', 'TyreLife', 'Position']].copy()
 
         # Convert timedelta to seconds for JSON serialization
         for col in ['LapTime', 'Sector1Time', 'Sector2Time', 'Sector3Time']:
