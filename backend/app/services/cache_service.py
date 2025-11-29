@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import Any
 import json
+import pandas as pd
 from ..db.database import get_db
 from ..db.models import (
     EventSchedule,
@@ -31,6 +32,15 @@ class CacheService:
         if cached_at is None:
             return False
         return datetime.utcnow() - cached_at < self.cache_ttl
+
+    @staticmethod
+    def _sanitize_value(value):
+        """Convert pandas NaT and other problematic values to None"""
+        if pd.isna(value):
+            return None
+        if isinstance(value, pd.Timestamp):
+            return value.to_pydatetime()
+        return value
 
     # Event Schedule Cache
 
@@ -203,18 +213,18 @@ class CacheService:
             for result in results_data.get("results", []):
                 session_result = SessionResult(
                     session_id=session_id,
-                    position=result.get("Position"),
-                    driver_number=result.get("DriverNumber"),
-                    driver_abbreviation=result.get("Abbreviation"),
-                    driver_name=result.get("FullName"),
-                    team_name=result.get("TeamName"),
-                    grid_position=result.get("GridPosition"),
-                    q1_time=result.get("Q1"),
-                    q2_time=result.get("Q2"),
-                    q3_time=result.get("Q3"),
-                    race_time=result.get("Time"),
-                    status=result.get("Status"),
-                    points=result.get("Points"),
+                    position=self._sanitize_value(result.get("Position")),
+                    driver_number=self._sanitize_value(result.get("DriverNumber")),
+                    driver_abbreviation=self._sanitize_value(result.get("Abbreviation")),
+                    driver_name=self._sanitize_value(result.get("FullName")),
+                    team_name=self._sanitize_value(result.get("TeamName")),
+                    grid_position=self._sanitize_value(result.get("GridPosition")),
+                    q1_time=self._sanitize_value(result.get("Q1")),
+                    q2_time=self._sanitize_value(result.get("Q2")),
+                    q3_time=self._sanitize_value(result.get("Q3")),
+                    race_time=self._sanitize_value(result.get("Time")),
+                    status=self._sanitize_value(result.get("Status")),
+                    points=self._sanitize_value(result.get("Points")),
                 )
                 db.add(session_result)
 
@@ -292,14 +302,14 @@ class CacheService:
             for lap in lap_data.get("laps", []):
                 lap_time = LapTime(
                     session_id=session_id,
-                    driver_abbreviation=lap.get("Driver"),
-                    lap_number=lap.get("LapNumber"),
-                    lap_time=lap.get("LapTime"),
-                    sector1_time=lap.get("Sector1Time"),
-                    sector2_time=lap.get("Sector2Time"),
-                    sector3_time=lap.get("Sector3Time"),
-                    compound=lap.get("Compound"),
-                    tyre_life=lap.get("TyreLife"),
+                    driver_abbreviation=self._sanitize_value(lap.get("Driver")),
+                    lap_number=self._sanitize_value(lap.get("LapNumber")),
+                    lap_time=self._sanitize_value(lap.get("LapTime")),
+                    sector1_time=self._sanitize_value(lap.get("Sector1Time")),
+                    sector2_time=self._sanitize_value(lap.get("Sector2Time")),
+                    sector3_time=self._sanitize_value(lap.get("Sector3Time")),
+                    compound=self._sanitize_value(lap.get("Compound")),
+                    tyre_life=self._sanitize_value(lap.get("TyreLife")),
                 )
                 db.add(lap_time)
 
