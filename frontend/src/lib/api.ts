@@ -112,3 +112,104 @@ export async function getConstructorStandings(year: number) {
 export async function getSchedule(year: number) {
   return fetchAPI(`/fastf1/schedule/${year}`);
 }
+
+// Team logo mapping - Using official F1 team logos
+const TEAM_LOGOS: Record<string, string> = {
+  'McLaren': 'https://media.formula1.com/content/dam/fom-website/teams/2025/mclaren-logo.png',
+  'Mercedes': 'https://media.formula1.com/content/dam/fom-website/teams/2025/mercedes-logo.png',
+  'Red Bull': 'https://media.formula1.com/content/dam/fom-website/teams/2025/red-bull-racing-logo.png',
+  'Ferrari': 'https://media.formula1.com/content/dam/fom-website/teams/2025/ferrari-logo.png',
+  'Aston Martin': 'https://media.formula1.com/content/dam/fom-website/teams/2025/aston-martin-logo.png',
+  'Alpine': 'https://media.formula1.com/content/dam/fom-website/teams/2025/alpine-logo.png',
+  'Williams': 'https://media.formula1.com/content/dam/fom-website/teams/2025/williams-logo.png',
+  'Racing Bulls': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/rb-logo.png',
+  'Sauber': 'https://media.formula1.com/content/dam/fom-website/teams/2025/kick-sauber-logo.png',
+  'Haas': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/haas-f1-team-logo.png'
+};
+
+export async function getConstructorRaceResults(year: number) {
+  const standings = await fetchAPI<any>(`/espn/standings/${year}?type=constructor`);
+
+  // Get all race events for the season from FastF1 schedule
+  const schedule = await getSchedule(year);
+
+  // Create a map of race names by round number for fallback
+  const scheduleMap: Record<string, string> = {};
+  schedule.forEach((race: any) => {
+    scheduleMap[race.RoundNumber.toString()] = race.EventName;
+  });
+
+  // Fetch race-by-race data for each constructor
+  const constructorData = await Promise.all(
+    standings.standings.map(async (standing: any) => {
+      const manufacturerRef = standing.manufacturer?.$ref || '';
+
+      try {
+        // Fetch manufacturer details
+        const manufacturer = await fetch(manufacturerRef).then(r => r.json());
+        const teamName = manufacturer.displayName || manufacturer.name;
+
+        // Fetch eventlog with race-by-race statistics
+        const eventLogUrl = manufacturer.eventLog.$ref;
+        const eventLog = await fetch(eventLogUrl).then(r => r.json());
+
+        // Fetch points for each race
+        const raceResults = await Promise.all(
+          eventLog.events.items.map(async (item: any, index: number) => {
+            try {
+              const statsUrl = item.statistics.$ref;
+              const stats = await fetch(statsUrl).then(r => r.json());
+
+              let eventName = 'Unknown';
+              try {
+                const eventUrl = item.event.$ref;
+                const event = await fetch(eventUrl).then(r => r.json());
+                eventName = event.shortName || event.name;
+              } catch (e) {
+                // If event fetch fails, use schedule as fallback
+                const roundNumber = (index + 1).toString();
+                eventName = scheduleMap[roundNumber] || `Round ${roundNumber}`;
+              }
+
+              const pointsStat = stats.splits.categories[0]?.stats?.find((s: any) => s.name === 'points');
+              const points = pointsStat?.value || 0;
+
+              return {
+                eventId: item.eventId,
+                eventName: eventName,
+                points: points
+              };
+            } catch (e) {
+              // Fallback to schedule name
+              const roundNumber = (index + 1).toString();
+              return {
+                eventId: item.eventId,
+                eventName: scheduleMap[roundNumber] || `Round ${roundNumber}`,
+                points: 0
+              };
+            }
+          })
+        );
+
+        // Get total points
+        const totalPoints = standing.records[0]?.stats?.find((s: any) => s.name === 'points')?.value || 0;
+
+        return {
+          teamName,
+          teamLogo: TEAM_LOGOS[teamName] || '',
+          totalPoints,
+          raceResults
+        };
+      } catch (e) {
+        return {
+          teamName: 'Unknown Team',
+          teamLogo: '',
+          totalPoints: 0,
+          raceResults: []
+        };
+      }
+    })
+  );
+
+  return constructorData;
+}

@@ -1,10 +1,16 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { getDriverStandings, getConstructorStandings } from '../lib/api';
+import { getDriverStandings, getConstructorRaceResults } from '../lib/api';
 
 const currentYear = 2025;
 const driverStandings = await getDriverStandings(currentYear);
-const constructorStandings = await getConstructorStandings(currentYear);
+const constructorRaceResults = await getConstructorRaceResults(currentYear);
+
+// Sort by total points descending
+constructorRaceResults.sort((a, b) => b.totalPoints - a.totalPoints);
+
+// Get unique race names for table headers (from first team that has races)
+const raceNames = constructorRaceResults[0]?.raceResults.map(r => r.eventName) || [];
 ---
 
 <Layout title={`F1 Standings ${currentYear}`}>
@@ -59,19 +65,45 @@ const constructorStandings = await getConstructorStandings(currentYear);
     </div>
 
     <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
-      <h2 class="text-2xl font-bold mb-4">Constructor Standings</h2>
-      <div class="space-y-2">
-        {constructorStandings.standings.map((team, index) => {
-          const stats = team.records[0]?.stats || [];
-          const points = stats.find(s => s.name === 'points')?.value || 0;
-          return (
-            <div class="flex items-center gap-4 p-3 bg-gray-800/50 rounded">
-              <div class="font-bold w-8">{index + 1}</div>
-              <div class="flex-1">{team.teamName}</div>
-              <div class="font-bold">{points} pts</div>
-            </div>
-          );
-        })}
+      <h2 class="text-2xl font-bold mb-4">Constructor Standings - Points by Race</h2>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-800/50 border-b border-gray-700">
+            <tr>
+              <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-0 bg-gray-800/50">Pos</th>
+              <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-12 bg-gray-800/50">Team</th>
+              {raceNames.map((raceName) => (
+                <th class="px-3 py-3 text-center text-xs font-medium text-gray-400 uppercase whitespace-nowrap">{raceName}</th>
+              ))}
+              <th class="px-3 py-3 text-right text-xs font-medium text-gray-400 uppercase sticky right-0 bg-gray-800/50">Total</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800">
+            {constructorRaceResults.map((team, index) => (
+              <tr class="hover:bg-gray-800/30 transition-colors">
+                <td class="px-3 py-3 whitespace-nowrap sticky left-0 bg-gray-900/50">
+                  <div class="font-bold">{index + 1}</div>
+                </td>
+                <td class="px-3 py-3 whitespace-nowrap sticky left-12 bg-gray-900/50">
+                  <div class="flex items-center gap-3">
+                    {team.teamLogo && (
+                      <img src={team.teamLogo} alt={team.teamName} class="h-8 w-auto object-contain" />
+                    )}
+                    <div class="font-medium">{team.teamName}</div>
+                  </div>
+                </td>
+                {team.raceResults.map((race) => (
+                  <td class="px-3 py-3 text-center whitespace-nowrap">
+                    {race.points > 0 ? race.points : '-'}
+                  </td>
+                ))}
+                <td class="px-3 py-3 text-right whitespace-nowrap sticky right-0 bg-gray-900/50">
+                  <div class="font-bold text-lg">{team.totalPoints}</div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
