@@ -1,0 +1,16 @@
+[project]
+name = "f1-webapp"
+version = "0.1.0"
+description = "Formula 1 Web Application with FastF1 and ESPN API integration"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "httpx>=0.28.1",
+    "fastf1>=3.4.0",
+    "pandas>=2.3.3",
+    "python-dotenv>=1.0.0",
+    "redis>=5.0.0",
+    "pydantic-settings>=2.0.0",
+]
