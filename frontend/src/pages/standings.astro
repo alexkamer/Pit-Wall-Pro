@@ -1,0 +1,78 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getDriverStandings, getConstructorStandings } from '../lib/api';
+
+const currentYear = 2025;
+const driverStandings = await getDriverStandings(currentYear);
+const constructorStandings = await getConstructorStandings(currentYear);
+---
+
+<Layout title={`F1 Standings ${currentYear}`}>
+  <div class="max-w-7xl mx-auto px-4 py-12">
+    <h1 class="text-4xl font-bold mb-8">{currentYear} Championship Standings</h1>
+
+    <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6 mb-8">
+      <h2 class="text-2xl font-bold mb-4">Driver Standings</h2>
+      <div class="overflow-x-auto">
+        <table class="w-full">
+          <thead class="bg-gray-800/50 border-b border-gray-700">
+            <tr>
+              <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Pos</th>
+              <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Driver</th>
+              <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Team</th>
+              <th class="px-6 py-4 text-right text-xs font-medium text-gray-400 uppercase">Points</th>
+              <th class="px-6 py-4 text-right text-xs font-medium text-gray-400 uppercase">Wins</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800">
+            {driverStandings.standings.map((driver, index) => {
+              const stats = driver.records[0]?.stats || [];
+              const points = stats.find(s => s.name === 'championshipPts')?.value || 0;
+              const wins = stats.find(s => s.name === 'wins')?.value || 0;
+              const rank = stats.find(s => s.name === 'rank')?.value || index + 1;
+              const details = driver.driverDetails;
+
+              return (
+                <tr class="hover:bg-gray-800/50 transition-colors">
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-lg font-bold">{rank}</div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="font-medium">{details?.name || `Driver ${index + 1}`}</div>
+                    <div class="text-sm text-gray-400">{details?.abbreviation || ''}</div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-gray-400">
+                    {details?.team || 'Unknown Team'}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-right">
+                    <div class="text-xl font-bold">{points}</div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-right">
+                    <div class="text-lg">{wins}</div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
+      <h2 class="text-2xl font-bold mb-4">Constructor Standings</h2>
+      <div class="space-y-2">
+        {constructorStandings.standings.map((team, index) => {
+          const stats = team.records[0]?.stats || [];
+          const points = stats.find(s => s.name === 'points')?.value || 0;
+          return (
+            <div class="flex items-center gap-4 p-3 bg-gray-800/50 rounded">
+              <div class="font-bold w-8">{index + 1}</div>
+              <div class="flex-1">Team {index + 1}</div>
+              <div class="font-bold">{points} pts</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  </div>
+</Layout>

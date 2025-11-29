@@ -280,7 +280,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
 
             telemetry = ff1.get_lap_telemetry(lap)
 
-            return {
+            return json_safe({
                 "driver": driver,
                 "lap_number": int(lap["LapNumber"]),
                 "lap_time": str(lap["LapTime"]),
@@ -291,7 +291,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                     "brake": telemetry["Brake"].tolist(),
                     "gear": telemetry["nGear"].tolist(),
                 },
-            }
+            })
         except Exception as e:
             logger.error(f"Error getting telemetry: {e}")
             raise HTTPException(500, str(e))
@@ -321,7 +321,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
 
             comparison = ff1.compare_laps(lap1, lap2)
 
-            return {
+            return json_safe({
                 "driver1": {
                     "name": comparison["lap1"]["driver"],
                     "time": str(comparison["lap1"]["time"]),
@@ -340,7 +340,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                         "throttle": comparison["lap2"]["telemetry"]["Throttle"].tolist(),
                     },
                 },
-            }
+            })
         except Exception as e:
             logger.error(f"Error comparing drivers: {e}")
             raise HTTPException(500, str(e))

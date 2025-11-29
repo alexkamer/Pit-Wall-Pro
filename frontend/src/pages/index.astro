@@ -1,0 +1,52 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getDriverStandings, getSchedule } from '../lib/api';
+
+const currentYear = 2025;
+const standings = await getDriverStandings(currentYear);
+const schedule = await getSchedule(currentYear);
+const topDrivers = standings.standings.slice(0, 10);
+---
+
+<Layout title="F1 Analytics">
+  <div class="max-w-7xl mx-auto px-4 py-12">
+    <h1 class="text-5xl font-bold mb-8 text-center bg-gradient-to-r from-red-600 to-red-400 bg-clip-text text-transparent">
+      Formula 1 Analytics
+    </h1>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
+        <h2 class="text-2xl font-bold mb-6">Driver Standings</h2>
+        <div class="space-y-3">
+          {topDrivers.map((driver, index) => {
+            const stats = driver.records[0]?.stats || [];
+            const points = stats.find(s => s.name === 'championshipPts')?.value || 0;
+            const wins = stats.find(s => s.name === 'wins')?.value || 0;
+            const details = driver.driverDetails;
+
+            return (
+              <div class="flex items-center gap-4 p-3 bg-gray-800/50 rounded-lg hover:bg-gray-800 transition-colors">
+                <div class="text-2xl font-bold text-gray-500 w-8">{index + 1}</div>
+                <div class="flex-1">
+                  <div class="font-medium">{details?.name || `Driver ${index + 1}`}</div>
+                  <div class="text-sm text-gray-400">{details?.team || ''}</div>
+                </div>
+                <div class="text-right">
+                  <div class="text-xl font-bold">{points}</div>
+                  <div class="text-xs text-gray-400">{wins} wins</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
+        <h2 class="text-2xl font-bold mb-6">Season Calendar</h2>
+        <div class="text-gray-400">
+          {schedule.length} races in 2024 season
+        </div>
+      </div>
+    </div>
+  </div>
+</Layout>

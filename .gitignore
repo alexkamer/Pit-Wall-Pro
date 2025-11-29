@@ -4,41 +4,58 @@ __pycache__/
 *$py.class
 *.so
 .Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 *.egg-info/
+.installed.cfg
+*.egg
 
 # Virtual environments
 .venv/
 venv/
 ENV/
+env/
 
-# IDEs
+# FastF1 cache
+f1_cache/
+*.cache
+
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# Cache directories
-backend/data/*.db
-backend/data/*.db-journal
-cache/
-.cache/
-
-# Environment files
-.env
-.env.local
-
 # OS
 .DS_Store
 Thumbs.db
 
-# Next.js
-frontend/.next/
-frontend/out/
-frontend/node_modules/
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Build artifacts
+# Environment variables
+.env
+.env.local
+
+# Logs
 *.log
-dist/
-build/
-cache/
+
+# Database
+*.db
+*.sqlite3
+
+# Redis
+dump.rdb
