@@ -453,14 +453,11 @@ export default function RaceDetailsPage() {
                           <TableCell>
                             <div className="flex items-center gap-2">
                               {teamLogo && (
-                                <div
-                                  className="h-8 w-8 rounded flex items-center justify-center p-1"
-                                  style={{ backgroundColor: teamColor }}
-                                >
+                                <div className="h-10 w-10 rounded-lg flex items-center justify-center p-1.5 bg-white shadow-sm border-2" style={{ borderColor: teamColor }}>
                                   <img
                                     src={teamLogo}
                                     alt={teamName}
-                                    className="h-full w-full object-contain brightness-0 invert"
+                                    className="h-full w-full object-contain"
                                   />
                                 </div>
                               )}
