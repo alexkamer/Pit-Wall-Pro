@@ -93,6 +93,11 @@ const formatTime = (time: string | undefined, position: number): string => {
   // Convert to string if it's not already
   const timeStr = String(time);
 
+  // Handle NaT (Not a Time) values - return dash for missing/invalid times
+  if (timeStr === 'NaT' || timeStr === 'null' || timeStr === 'undefined') {
+    return '-';
+  }
+
   // For winner, format as H:MM:SS.mmm if it's in seconds format
   if (position === 1) {
     // Check if time is already formatted (contains colons)

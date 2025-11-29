@@ -37,30 +37,58 @@ export function RaceEvents({ year, race }: RaceEventsProps) {
     (status) => status.Status !== 1 && status.TimeSeconds
   ) || [];
 
-  // Group consecutive events of the same type
+  // Group consecutive events and merge similar ones
   const groupedEvents: Array<{
     status: number;
     message: string;
     startTime: number;
     endTime?: number;
+    count?: number;
   }> = [];
 
   significantEvents.forEach((event, index) => {
+    const eventIndex = trackStatusData?.track_status.indexOf(event) || 0;
     const nextAllClear = trackStatusData?.track_status.find(
-      (s, i) => i > trackStatusData.track_status.indexOf(event) && s.Status === 1
+      (s, i) => i > eventIndex && s.Status === 1
     );
 
-    groupedEvents.push({
-      status: event.Status,
-      message: event.Message,
-      startTime: event.TimeSeconds,
-      endTime: nextAllClear?.TimeSeconds,
-    });
+    // For yellow flags, check if we should merge with the previous event
+    if (event.Status === 2 && groupedEvents.length > 0) {
+      const lastEvent = groupedEvents[groupedEvents.length - 1];
+      // If last event was also a yellow flag and ended less than 5 minutes ago, skip this one
+      if (lastEvent.status === 2 && lastEvent.endTime && event.TimeSeconds - lastEvent.endTime < 300) {
+        // This is part of the same incident period, skip it
+        return;
+      }
+    }
+
+    // Only add events that are truly significant (VSC, Safety Car, or yellow flags with meaningful duration)
+    if (event.Status === 4 || event.Status === 5 || event.Status === 6 || event.Status === 7) {
+      // Always show Safety Car, Red Flag, VSC
+      groupedEvents.push({
+        status: event.Status,
+        message: event.Message,
+        startTime: event.TimeSeconds,
+        endTime: nextAllClear?.TimeSeconds,
+      });
+    } else if (event.Status === 2) {
+      // For yellow flags, only show if they last more than 10 seconds
+      const duration = nextAllClear ? nextAllClear.TimeSeconds - event.TimeSeconds : 0;
+      if (duration > 10) {
+        groupedEvents.push({
+          status: event.Status,
+          message: event.Message,
+          startTime: event.TimeSeconds,
+          endTime: nextAllClear?.TimeSeconds,
+        });
+      }
+    }
   });
 
-  // Filter red flag messages from race control
+  // Filter red flag messages from race control (excluding chequered flag)
   const redFlagMessages = raceControlData?.messages.filter(
-    (msg) => msg.Flag?.toLowerCase().includes('red') || msg.Message?.toLowerCase().includes('red flag')
+    (msg) => (msg.Flag?.toLowerCase().includes('red') || msg.Message?.toLowerCase().includes('red flag'))
+      && !msg.Message?.toLowerCase().includes('chequered')
   ) || [];
 
   // Get average weather conditions
