@@ -372,6 +372,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                         d.abbreviation,
                         d.display_name as driver_name,
                         t.display_name as team_name,
+                        t.logo_url as team_logo,
                         r.round_number,
                         ROW_NUMBER() OVER (PARTITION BY d.id ORDER BY r.round_number DESC) as rn
                     FROM session_results sr
@@ -381,7 +382,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                     JOIN races r ON rs.race_espn_event_id = r.espn_event_id
                     WHERE r.year = ? AND rs.session_type = 'Race'
                 )
-                SELECT driver_id, abbreviation, driver_name, team_name
+                SELECT driver_id, abbreviation, driver_name, team_name, team_logo
                 FROM driver_latest_team
                 WHERE rn = 1
                 ORDER BY driver_name
@@ -550,6 +551,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                     'driverName': data['info']['driver_name'],
                     'driverAbbreviation': data['info']['abbreviation'],
                     'teamName': data['info']['team_name'],
+                    'teamLogo': data['info'].get('team_logo'),
                     'totalPoints': total_points,
                     'raceResults': all_race_results
                 })
@@ -626,13 +628,20 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
             for team_id in constructor_race_data:
                 constructor_race_data[team_id]['races'] = list(constructor_race_data[team_id]['races'].values())
 
+            # Get team logos for constructors
+            cursor.execute("""
+                SELECT id, logo_url
+                FROM teams
+            """)
+            team_logos = {row['id']: row['logo_url'] for row in cursor.fetchall()}
+
             # Build constructor results
             constructor_results = []
             for team_id, data in constructor_race_data.items():
                 total_points = sum(race['points'] for race in data['races'])
                 constructor_results.append({
                     'teamName': data['teamName'],
-                    'teamLogo': '',  # TODO: Add team logos
+                    'teamLogo': team_logos.get(team_id),
                     'totalPoints': total_points,
                     'raceResults': data['races']
                 })

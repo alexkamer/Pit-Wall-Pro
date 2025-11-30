@@ -56,6 +56,7 @@ htmlcov/
 # Database
 *.db
 *.sqlite3
+f1_data.db
 
 # Redis
 dump.rdb

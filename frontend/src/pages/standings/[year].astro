@@ -285,12 +285,16 @@ const getTeamForDriver = (driverAbbr: string, roundNumber: number): string | nul
                   <div class="font-bold">{index + 1}</div>
                 </td>
                 <td class="px-3 py-3 whitespace-nowrap sticky left-[3.06rem] bg-gray-900 z-10 min-w-48">
-                  <div class="flex flex-col">
-                    <div class="font-medium">{driver.driverName}</div>
-                    <div class="text-xs text-gray-500">{driver.teamName}</div>
+                  <div class="flex items-center gap-3">
+                    {driver.teamLogo && (
+                      <img src={driver.teamLogo} alt={driver.teamName} class="h-6 w-auto object-contain" />
+                    )}
+                    <div class="flex flex-col">
+                      <div class="font-medium">{driver.driverName}</div>
+                      <div class="text-xs text-gray-500">{driver.teamName}</div>
+                    </div>
                   </div>
-                </td>
-                {driver.raceResults.map((race, raceIndex) => {
+                </td>                {driver.raceResults.map((race, raceIndex) => {
                   // Check if driver didn't participate in this race
                   if (race.points === null) {
                     return (
