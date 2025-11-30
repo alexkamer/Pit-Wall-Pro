@@ -1,0 +1,489 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { getCompleteStandings } from '../../lib/api';
+
+// Generate static paths for all years from 1950 to 2025
+export async function getStaticPaths() {
+  const years = Array.from({ length: 2025 - 1950 + 1 }, (_, i) => 2025 - i);
+  return years.map(year => ({
+    params: { year: year.toString() }
+  }));
+}
+
+// Get year from dynamic route parameter
+const { year } = Astro.params;
+const currentYear = year ? parseInt(year) : 2025;
+const availableYears = Array.from({ length: 2025 - 1950 + 1 }, (_, i) => 2025 - i);
+
+// Use new optimized endpoint - single API call instead of 100+!
+const completeData = await getCompleteStandings(currentYear);
+const driverRaceResults = completeData.driverResults;
+const constructorRaceResults = completeData.constructorResults;
+const raceMetadata = completeData.raceMetadata;
+
+// Check if we have any data
+const hasData = driverRaceResults.length > 0 || constructorRaceResults.length > 0;
+
+// Data is already sorted by total points descending from the backend
+
+// Get unique race names and countries for table headers
+const races = constructorRaceResults[0]?.raceResults.map(r => ({
+  name: r.eventName,
+  country: r.country
+})) || [];
+
+const driverRaces = driverRaceResults[0]?.raceResults.map(r => ({
+  name: r.eventName,
+  country: r.country
+})) || [];
+
+// Country to ISO code mapping for flag emojis
+const countryToCode: Record<string, string> = {
+  'Australia': 'AU',
+  'Austria': 'AT',
+  'Azerbaijan': 'AZ',
+  'Bahrain': 'BH',
+  'Belgium': 'BE',
+  'Brazil': 'BR',
+  'Canada': 'CA',
+  'China': 'CN',
+  'France': 'FR',
+  'Germany': 'DE',
+  'Hungary': 'HU',
+  'Italy': 'IT',
+  'Japan': 'JP',
+  'Mexico': 'MX',
+  'Monaco': 'MC',
+  'Netherlands': 'NL',
+  'Qatar': 'QA',
+  'Saudi Arabia': 'SA',
+  'Singapore': 'SG',
+  'Spain': 'ES',
+  'United Kingdom': 'GB',
+  'USA': 'US',
+  'United States': 'US',
+  'United Arab Emirates': 'AE'
+};
+
+// Convert country name to flag emoji
+const getCountryFlag = (country: string): string => {
+  const code = countryToCode[country];
+  if (!code) return '';
+
+  // Convert country code to flag emoji using regional indicator symbols
+  return String.fromCodePoint(
+    ...code.split('').map(char => 127397 + char.charCodeAt(0))
+  );
+};
+
+// Create abbreviated race names (remove sponsors and "Grand Prix")
+const getAbbreviatedRaceName = (eventName: string): string => {
+  // Remove common sponsors and patterns
+  let abbreviated = eventName
+    .replace(/Louis Vuitton |Heineken |Lenovo |Gulf Air |STC |Crypto\.com |AWS |Tag Heuer |Aramco |Pirelli |MSC Cruises |Mexico City |Singapore Airlines |Qatar Airways |Etihad Airways |Moët & Chandon /gi, '')
+    .replace(/ Grand Prix$/i, '')
+    .replace(/Made in Italy /gi, '');
+
+  return abbreviated;
+};
+
+// Calculate cumulative standings after each race for drivers
+const calculateDriverCumulativeStandings = () => {
+  const numRaces = driverRaces.length;
+  const standings = [];
+
+  for (let raceIndex = 0; raceIndex < numRaces; raceIndex++) {
+    const cumulativePoints = driverRaceResults.map(driver => ({
+      driverKey: driver.driverAbbreviation,
+      points: driver.raceResults.slice(0, raceIndex + 1).reduce((sum, race) => {
+        // Only add points if the driver participated (points is not null)
+        return sum + (race.points !== null ? race.points : 0);
+      }, 0)
+    }));
+
+    cumulativePoints.sort((a, b) => b.points - a.points);
+
+    const raceStandings = {};
+    let currentPosition = 1;
+
+    for (let i = 0; i < cumulativePoints.length; i++) {
+      const driver = cumulativePoints[i];
+
+      if (i > 0 && driver.points === cumulativePoints[i - 1].points) {
+        const prevPosition = raceStandings[cumulativePoints[i - 1].driverKey];
+        const basePosition = prevPosition.toString().replace('T', '');
+        raceStandings[driver.driverKey] = `T${basePosition}`;
+        raceStandings[cumulativePoints[i - 1].driverKey] = `T${basePosition}`;
+      } else {
+        raceStandings[driver.driverKey] = currentPosition;
+        currentPosition = i + 2;
+      }
+    }
+
+    standings.push(raceStandings);
+  }
+
+  return standings;
+};
+
+// Calculate cumulative standings after each race for constructors
+const calculateConstructorCumulativeStandings = () => {
+  const numRaces = races.length;
+  const standings = [];
+
+  for (let raceIndex = 0; raceIndex < numRaces; raceIndex++) {
+    const cumulativePoints = constructorRaceResults.map(team => ({
+      teamName: team.teamName,
+      points: team.raceResults.slice(0, raceIndex + 1).reduce((sum, race) => sum + race.points, 0)
+    }));
+
+    cumulativePoints.sort((a, b) => b.points - a.points);
+
+    const raceStandings = {};
+    let currentPosition = 1;
+
+    for (let i = 0; i < cumulativePoints.length; i++) {
+      const team = cumulativePoints[i];
+
+      if (i > 0 && team.points === cumulativePoints[i - 1].points) {
+        const prevPosition = raceStandings[cumulativePoints[i - 1].teamName];
+        const basePosition = prevPosition.toString().replace('T', '');
+        raceStandings[team.teamName] = `T${basePosition}`;
+        raceStandings[cumulativePoints[i - 1].teamName] = `T${basePosition}`;
+      } else {
+        raceStandings[team.teamName] = currentPosition;
+        currentPosition = i + 2;
+      }
+    }
+
+    standings.push(raceStandings);
+  }
+
+  return standings;
+};
+
+const driverCumulativeStandings = calculateDriverCumulativeStandings();
+const constructorCumulativeStandings = calculateConstructorCumulativeStandings();
+
+// Create metadata map by round number
+const metadataMap: Record<number, any> = {};
+raceMetadata.forEach((meta: any) => {
+  metadataMap[meta.roundNumber] = meta;
+});
+
+// Helper function to check if a team had the race winner/pole/sprint winner
+// We need to map driver abbreviations to teams for each race
+const getTeamForDriver = (driverAbbr: string, roundNumber: number): string | null => {
+  // Look through driver race results to find the team
+  for (const driver of driverRaceResults) {
+    if (driver.driverAbbreviation === driverAbbr) {
+      return driver.teamName;
+    }
+  }
+  return null;
+};
+---
+
+<Layout title={`F1 Standings ${currentYear}`}>
+  <div class="max-w-7xl mx-auto px-4 py-12">
+    <div class="flex items-center justify-between mb-8">
+      <h1 class="text-4xl font-bold">{currentYear} Championship Standings</h1>
+      <div class="flex items-center gap-3">
+        <label for="yearSelect" class="text-sm text-gray-400">Season:</label>
+        <select
+          id="yearSelect"
+          class="bg-gray-800 border border-gray-700 text-white rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        >
+          {availableYears.map(year => (
+            <option value={year} selected={year === currentYear}>
+              {year}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-4 mb-6">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase mb-2">Legend</h3>
+      <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+        <div class="flex items-center gap-2">
+          <span class="text-yellow-400 text-lg">🏆</span>
+          <span class="text-gray-300">Race Winner</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-purple-400 text-lg">⚡</span>
+          <span class="text-gray-300">Sprint Winner</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-blue-400 text-lg">🎯</span>
+          <span class="text-gray-300">Pole Position</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-purple-300 text-lg">S</span>
+          <span class="text-gray-300">Sprint Race Weekend</span>
+        </div>
+      </div>
+    </div>
+
+    {!hasData && (
+      <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-12 mb-8 text-center">
+        <div class="text-6xl mb-4">🏁</div>
+        <h2 class="text-2xl font-bold mb-2">No Data Available</h2>
+        <p class="text-gray-400">
+          There are no standings available for the {currentYear} season yet.
+          {currentYear === 2025 && " The season hasn't started!"}
+        </p>
+      </div>
+    )}
+
+    {hasData && (
+    <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6 mb-8">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-2xl font-bold">Driver Standings - Points by Race</h2>
+        <label class="flex items-center gap-3 cursor-pointer">
+          <span class="text-sm text-gray-400">Show Positions</span>
+          <input
+            type="checkbox"
+            id="showDriverPositions"
+            class="w-5 h-5 rounded bg-gray-800 border-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-2"
+          />
+        </label>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm border-collapse">
+          <thead class="bg-gray-800/50 border-b border-gray-700">
+            <tr>
+              <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-0 bg-gray-800 z-10 w-20">Pos</th>
+              <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-[3.06rem] bg-gray-800 z-10 min-w-48">Driver</th>
+              {driverRaces.map((race, raceIndex) => {
+                const roundNumber = raceIndex + 1;
+                const metadata = metadataMap[roundNumber];
+                const hasSprint = metadata?.hasSprint;
+
+                return (
+                  <th class="px-3 py-3 text-center text-xs font-medium text-gray-400 uppercase whitespace-nowrap">
+                    <div class="flex flex-col items-center gap-1">
+                      <div class="flex items-center gap-1">
+                        <span class="text-2xl">{getCountryFlag(race.country)}</span>
+                        {hasSprint && (
+                          <span class="text-purple-300 text-xs font-bold" title="Sprint Race Weekend">S</span>
+                        )}
+                      </div>
+                      <span class="text-xs">{getAbbreviatedRaceName(race.name)}</span>
+                    </div>
+                  </th>
+                );
+              })}
+              <th class="px-3 py-3 text-right text-xs font-medium text-gray-400 uppercase sticky right-0 bg-gray-800">Total</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800">
+            {driverRaceResults.map((driver, index) => (
+              <tr class="hover:bg-gray-800/30 transition-colors">
+                <td class="px-3 py-3 whitespace-nowrap sticky left-0 bg-gray-900 z-10 w-20">
+                  <div class="font-bold">{index + 1}</div>
+                </td>
+                <td class="px-3 py-3 whitespace-nowrap sticky left-[3.06rem] bg-gray-900 z-10 min-w-48">
+                  <div class="flex flex-col">
+                    <div class="font-medium">{driver.driverName}</div>
+                    <div class="text-xs text-gray-500">{driver.teamName}</div>
+                  </div>
+                </td>
+                {driver.raceResults.map((race, raceIndex) => {
+                  // Check if driver didn't participate in this race
+                  if (race.points === null) {
+                    return (
+                      <td class="px-3 py-3 text-center whitespace-nowrap driver-race-cell">
+                        <span class="text-gray-600">-</span>
+                      </td>
+                    );
+                  }
+
+                  const position = driverCumulativeStandings[raceIndex]?.[driver.driverAbbreviation];
+                  const roundNumber = raceIndex + 1;
+                  const metadata = metadataMap[roundNumber];
+                  const isRaceWinner = metadata?.raceWinner === driver.driverAbbreviation;
+                  const isOnPole = metadata?.polePosition === driver.driverAbbreviation;
+                  const isSprintWinner = metadata?.sprintWinner === driver.driverAbbreviation;
+
+                  return (
+                    <td class="px-3 py-3 text-center whitespace-nowrap driver-race-cell">
+                      <div class="flex flex-col items-center gap-0.5">
+                        <div class="flex items-center gap-1">
+                          <span class="driver-points-value">{race.points > 0 ? race.points : '-'}</span>
+                          <span class="driver-position-value hidden text-xs text-gray-500">
+                            {position ? `(${position})` : ''}
+                          </span>
+                        </div>
+                        {(isRaceWinner || isOnPole || isSprintWinner) && (
+                          <div class="flex gap-0.5 text-xs">
+                            {isRaceWinner && <span title="Race Winner" class="text-yellow-400">🏆</span>}
+                            {isSprintWinner && <span title="Sprint Winner" class="text-purple-400">⚡</span>}
+                            {isOnPole && <span title="Pole Position" class="text-blue-400">🎯</span>}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  );
+                })}
+                <td class="px-3 py-3 text-right whitespace-nowrap sticky right-0 bg-gray-900">
+                  <div class="font-bold text-lg">{driver.totalPoints}</div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-2xl font-bold">Constructor Standings - Points by Race</h2>
+        <label class="flex items-center gap-3 cursor-pointer">
+          <span class="text-sm text-gray-400">Show Positions</span>
+          <input
+            type="checkbox"
+            id="showPositions"
+            class="w-5 h-5 rounded bg-gray-800 border-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-2"
+          />
+        </label>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm border-collapse">
+          <thead class="bg-gray-800/50 border-b border-gray-700">
+            <tr>
+              <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-0 bg-gray-800 z-10 w-20">Pos</th>
+              <th class="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase sticky left-[3.06rem] bg-gray-800 z-10 min-w-48">Team</th>
+              {races.map((race, raceIndex) => {
+                const roundNumber = raceIndex + 1;
+                const metadata = metadataMap[roundNumber];
+                const hasSprint = metadata?.hasSprint;
+
+                return (
+                  <th class="px-3 py-3 text-center text-xs font-medium text-gray-400 uppercase whitespace-nowrap">
+                    <div class="flex flex-col items-center gap-1">
+                      <div class="flex items-center gap-1">
+                        <span class="text-2xl">{getCountryFlag(race.country)}</span>
+                        {hasSprint && (
+                          <span class="text-purple-300 text-xs font-bold" title="Sprint Race Weekend">S</span>
+                        )}
+                      </div>
+                      <span class="text-xs">{getAbbreviatedRaceName(race.name)}</span>
+                    </div>
+                  </th>
+                );
+              })}
+              <th class="px-3 py-3 text-right text-xs font-medium text-gray-400 uppercase sticky right-0 bg-gray-800">Total</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800">
+            {constructorRaceResults.map((team, index) => (
+              <tr class="hover:bg-gray-800/30 transition-colors">
+                <td class="px-3 py-3 whitespace-nowrap sticky left-0 bg-gray-900 z-10 w-20">
+                  <div class="font-bold">{index + 1}</div>
+                </td>
+                <td class="px-3 py-3 whitespace-nowrap sticky left-[3.06rem] bg-gray-900 z-10 min-w-48">
+                  <div class="flex items-center gap-3">
+                    {team.teamLogo && (
+                      <img src={team.teamLogo} alt={team.teamName} class="h-8 w-auto object-contain" />
+                    )}
+                    <div class="font-medium">{team.teamName}</div>
+                  </div>
+                </td>
+                {team.raceResults.map((race, raceIndex) => {
+                  const position = constructorCumulativeStandings[raceIndex]?.[team.teamName];
+                  const roundNumber = raceIndex + 1;
+                  const metadata = metadataMap[roundNumber];
+
+                  // Check if this team had the race winner, pole position, or sprint winner
+                  const raceWinnerTeam = metadata?.raceWinner ? getTeamForDriver(metadata.raceWinner, roundNumber) : null;
+                  const poleTeam = metadata?.polePosition ? getTeamForDriver(metadata.polePosition, roundNumber) : null;
+                  const sprintWinnerTeam = metadata?.sprintWinner ? getTeamForDriver(metadata.sprintWinner, roundNumber) : null;
+
+                  const hasRaceWinner = raceWinnerTeam === team.teamName;
+                  const hasPole = poleTeam === team.teamName;
+                  const hasSprintWinner = sprintWinnerTeam === team.teamName;
+
+                  return (
+                    <td class="px-3 py-3 text-center whitespace-nowrap constructor-race-cell">
+                      <div class="flex flex-col items-center gap-0.5">
+                        <div class="flex items-center gap-1">
+                          <span class="constructor-points-value">{race.points > 0 ? race.points : '-'}</span>
+                          <span class="constructor-position-value hidden text-xs text-gray-500">
+                            {position ? `(${position})` : ''}
+                          </span>
+                        </div>
+                        {(hasRaceWinner || hasPole || hasSprintWinner) && (
+                          <div class="flex gap-0.5 text-xs">
+                            {hasRaceWinner && <span title="Race Winner" class="text-yellow-400">🏆</span>}
+                            {hasSprintWinner && <span title="Sprint Winner" class="text-purple-400">⚡</span>}
+                            {hasPole && <span title="Pole Position" class="text-blue-400">🎯</span>}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  );
+                })}
+                <td class="px-3 py-3 text-right whitespace-nowrap sticky right-0 bg-gray-900">
+                  <div class="font-bold text-lg">{team.totalPoints}</div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    )}
+  </div>
+</Layout>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    // Year selector
+    const yearSelect = document.getElementById('yearSelect') as HTMLSelectElement;
+    if (yearSelect) {
+      yearSelect.addEventListener('change', (e) => {
+        const selectedYear = (e.target as HTMLSelectElement).value;
+        // Navigate to the new year using dynamic routing
+        window.location.href = `/standings/${selectedYear}`;
+      });
+    }
+
+    // Driver positions toggle
+    const driverToggleCheckbox = document.getElementById('showDriverPositions') as HTMLInputElement;
+    const driverPositionValues = document.querySelectorAll('.driver-position-value');
+
+    if (driverToggleCheckbox) {
+      driverToggleCheckbox.addEventListener('change', (e) => {
+        const isChecked = (e.target as HTMLInputElement).checked;
+
+        driverPositionValues.forEach((positionValue) => {
+          if (isChecked) {
+            positionValue.classList.remove('hidden');
+          } else {
+            positionValue.classList.add('hidden');
+          }
+        });
+      });
+    }
+
+    // Constructor positions toggle
+    const constructorToggleCheckbox = document.getElementById('showPositions') as HTMLInputElement;
+    const constructorPositionValues = document.querySelectorAll('.constructor-position-value');
+
+    if (constructorToggleCheckbox) {
+      constructorToggleCheckbox.addEventListener('change', (e) => {
+        const isChecked = (e.target as HTMLInputElement).checked;
+
+        constructorPositionValues.forEach((positionValue) => {
+          if (isChecked) {
+            positionValue.classList.remove('hidden');
+          } else {
+            positionValue.classList.add('hidden');
+          }
+        });
+      });
+    }
+  });
+</script>
