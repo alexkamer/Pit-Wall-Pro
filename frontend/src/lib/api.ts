@@ -113,6 +113,17 @@ export async function getSchedule(year: number) {
   return fetchAPI(`/fastf1/schedule/${year}`);
 }
 
+// Get race metadata (winners, pole position) for each round from backend
+export async function getRaceMetadata(year: number) {
+  const data = await fetchAPI<any>(`/standings/complete/${year}`);
+  return data.raceMetadata;
+}
+
+// New optimized function that gets all standings data in one call
+export async function getCompleteStandings(year: number) {
+  return fetchAPI<any>(`/standings/complete/${year}`);
+}
+
 // Team logo mapping - Using official F1 team logos
 const TEAM_LOGOS: Record<string, string> = {
   'McLaren': 'https://media.formula1.com/content/dam/fom-website/teams/2025/mclaren-logo.png',

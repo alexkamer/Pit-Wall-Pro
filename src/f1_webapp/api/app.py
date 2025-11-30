@@ -345,6 +345,314 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
             logger.error(f"Error comparing drivers: {e}")
             raise HTTPException(500, str(e))
 
+    @app.get("/standings/complete/{year}")
+    def get_complete_standings(year: int):
+        """Get complete standings data directly from database in one call.
+
+        Returns driver and constructor standings with race-by-race data
+        and metadata about winners, poles, and sprints.
+        Fixes performance issues by using database queries instead of 100+ API calls.
+        """
+        import sqlite3
+
+        try:
+            # Connect to database (use absolute path relative to project root)
+            import os
+            db_path = os.path.join(os.path.dirname(__file__), '../../../f1_data.db')
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Get all drivers who participated in races this year with their teams
+            # Use LAST_VALUE to get the most recent team for each driver
+            cursor.execute("""
+                WITH driver_latest_team AS (
+                    SELECT
+                        d.id as driver_id,
+                        d.abbreviation,
+                        d.display_name as driver_name,
+                        t.display_name as team_name,
+                        r.round_number,
+                        ROW_NUMBER() OVER (PARTITION BY d.id ORDER BY r.round_number DESC) as rn
+                    FROM session_results sr
+                    JOIN drivers d ON sr.driver_id = d.id
+                    JOIN teams t ON sr.team_id = t.id
+                    JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                    JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                    WHERE r.year = ? AND rs.session_type = 'Race'
+                )
+                SELECT driver_id, abbreviation, driver_name, team_name
+                FROM driver_latest_team
+                WHERE rn = 1
+                ORDER BY driver_name
+            """, (year,))
+
+            drivers = {row['driver_id']: dict(row) for row in cursor.fetchall()}
+
+            # Get all races for the year
+            cursor.execute("""
+                SELECT round_number, event_name, country, event_format,
+                       has_sprint
+                FROM races
+                WHERE year = ?
+                ORDER BY round_number
+            """, (year,))
+
+            races = [dict(row) for row in cursor.fetchall()]
+
+            # Get race winners
+            cursor.execute("""
+                SELECT r.round_number, d.abbreviation as winner_abbr
+                FROM session_results sr
+                JOIN drivers d ON sr.driver_id = d.id
+                JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                WHERE r.year = ? AND rs.session_type = 'Race' AND sr.position = 1
+                ORDER BY r.round_number
+            """, (year,))
+
+            race_winners = {row['round_number']: row['winner_abbr'] for row in cursor.fetchall()}
+
+            # Get pole positions (from qualifying)
+            cursor.execute("""
+                SELECT r.round_number, d.abbreviation as pole_abbr
+                FROM session_results sr
+                JOIN drivers d ON sr.driver_id = d.id
+                JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                WHERE r.year = ? AND rs.session_type = 'Qualifying' AND sr.position = 1
+                ORDER BY r.round_number
+            """, (year,))
+
+            pole_positions = {row['round_number']: row['pole_abbr'] for row in cursor.fetchall()}
+
+            # Get sprint winners
+            cursor.execute("""
+                SELECT r.round_number, d.abbreviation as sprint_abbr
+                FROM session_results sr
+                JOIN drivers d ON sr.driver_id = d.id
+                JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                WHERE r.year = ? AND rs.session_type = 'Sprint Race' AND sr.position = 1
+                ORDER BY r.round_number
+            """, (year,))
+
+            sprint_winners = {row['round_number']: row['sprint_abbr'] for row in cursor.fetchall()}
+
+            # Build race metadata
+            race_metadata = []
+            for race in races:
+                round_num = race['round_number']
+                race_metadata.append({
+                    'roundNumber': round_num,
+                    'eventName': race['event_name'],
+                    'country': race['country'],
+                    'hasSprint': bool(race['has_sprint']),
+                    'raceWinner': race_winners.get(round_num),
+                    'polePosition': pole_positions.get(round_num),
+                    'sprintWinner': sprint_winners.get(round_num)
+                })
+
+            # F1 2024 points system
+            points_system = {
+                1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1
+            }
+
+            # F1 2024 sprint points system (top 8 only)
+            sprint_points_system = {
+                1: 8, 2: 7, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1
+            }
+
+            # Get driver race-by-race results with calculated points (Race + Sprint combined)
+            cursor.execute("""
+                SELECT
+                    d.id as driver_id,
+                    d.abbreviation,
+                    d.display_name as driver_name,
+                    t.display_name as team_name,
+                    r.round_number,
+                    r.event_name,
+                    r.country,
+                    rs.session_type,
+                    sr.position,
+                    sr.fastest_lap
+                FROM session_results sr
+                JOIN drivers d ON sr.driver_id = d.id
+                JOIN teams t ON sr.team_id = t.id
+                JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                WHERE r.year = ? AND rs.session_type IN ('Race', 'Sprint Race')
+                ORDER BY d.display_name, r.round_number, rs.session_type
+            """, (year,))
+
+            # Organize results by driver and round (combining race + sprint points)
+            driver_race_data = {}
+            for row in cursor.fetchall():
+                driver_id = row['driver_id']
+                round_number = row['round_number']
+
+                if driver_id not in driver_race_data:
+                    driver_race_data[driver_id] = {
+                        'info': drivers.get(driver_id, {}),
+                        'races': {}  # Use dict keyed by round_number to combine race+sprint
+                    }
+
+                # Initialize round if not exists
+                if round_number not in driver_race_data[driver_id]['races']:
+                    driver_race_data[driver_id]['races'][round_number] = {
+                        'roundNumber': round_number,
+                        'eventName': row['event_name'],
+                        'country': row['country'],
+                        'points': 0
+                    }
+
+                position = row['position']
+                session_type = row['session_type']
+
+                # Calculate points based on session type
+                if session_type == 'Race':
+                    race_points = points_system.get(position, 0)
+                    # Add 1 point for fastest lap if finished in top 10
+                    if row['fastest_lap'] and position and position <= 10:
+                        race_points += 1
+                    driver_race_data[driver_id]['races'][round_number]['points'] += race_points
+                elif session_type == 'Sprint Race':
+                    sprint_points = sprint_points_system.get(position, 0)
+                    driver_race_data[driver_id]['races'][round_number]['points'] += sprint_points
+
+            # Convert race dict to list
+            for driver_id in driver_race_data:
+                driver_race_data[driver_id]['races'] = list(driver_race_data[driver_id]['races'].values())
+
+            # Build driver results with all races filled in
+            driver_results = []
+            for driver_id, data in driver_race_data.items():
+                # Create a map of round_number to race result
+                race_map = {race['roundNumber']: race for race in data['races']}
+
+                # Fill in all races in order
+                all_race_results = []
+                for race_meta in races:
+                    round_num = race_meta['round_number']
+                    if round_num in race_map:
+                        all_race_results.append(race_map[round_num])
+                    else:
+                        # Driver didn't participate in this race
+                        all_race_results.append({
+                            'roundNumber': round_num,
+                            'eventName': race_meta['event_name'],
+                            'country': race_meta['country'],
+                            'points': None  # Use None to indicate no participation
+                        })
+
+                total_points = sum(race['points'] for race in data['races'])
+                driver_results.append({
+                    'driverName': data['info']['driver_name'],
+                    'driverAbbreviation': data['info']['abbreviation'],
+                    'teamName': data['info']['team_name'],
+                    'totalPoints': total_points,
+                    'raceResults': all_race_results
+                })
+
+            # Sort by total points descending
+            driver_results.sort(key=lambda x: x['totalPoints'], reverse=True)
+
+            # Get constructor race-by-race results (Race + Sprint combined)
+            cursor.execute("""
+                SELECT
+                    t.id as team_id,
+                    t.display_name as team_name,
+                    r.round_number,
+                    r.event_name,
+                    r.country,
+                    rs.session_type,
+                    GROUP_CONCAT(sr.position || ':' || COALESCE(sr.fastest_lap, 0)) as positions
+                FROM session_results sr
+                JOIN teams t ON sr.team_id = t.id
+                JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                WHERE r.year = ? AND rs.session_type IN ('Race', 'Sprint Race')
+                GROUP BY t.id, r.round_number, rs.session_type
+                ORDER BY t.display_name, r.round_number, rs.session_type
+            """, (year,))
+
+            # Organize constructor results by round (combining race + sprint)
+            constructor_race_data = {}
+            for row in cursor.fetchall():
+                team_id = row['team_id']
+                round_number = row['round_number']
+                session_type = row['session_type']
+
+                if team_id not in constructor_race_data:
+                    constructor_race_data[team_id] = {
+                        'teamName': row['team_name'],
+                        'races': {}  # Use dict keyed by round_number
+                    }
+
+                # Initialize round if not exists
+                if round_number not in constructor_race_data[team_id]['races']:
+                    constructor_race_data[team_id]['races'][round_number] = {
+                        'roundNumber': round_number,
+                        'eventName': row['event_name'],
+                        'country': row['country'],
+                        'points': 0
+                    }
+
+                # Calculate team points from positions
+                positions_str = row['positions'] or ''
+                team_points = 0
+                team_had_fastest = False
+
+                for pos_info in positions_str.split(','):
+                    if ':' in pos_info:
+                        pos_str, fastest_str = pos_info.split(':')
+                        try:
+                            pos = int(pos_str)
+                            if session_type == 'Race':
+                                team_points += points_system.get(pos, 0)
+                                if fastest_str == '1' and pos <= 10:
+                                    team_had_fastest = True
+                            elif session_type == 'Sprint':
+                                team_points += sprint_points_system.get(pos, 0)
+                        except:
+                            pass
+
+                if team_had_fastest:
+                    team_points += 1
+
+                constructor_race_data[team_id]['races'][round_number]['points'] += team_points
+
+            # Convert race dict to list
+            for team_id in constructor_race_data:
+                constructor_race_data[team_id]['races'] = list(constructor_race_data[team_id]['races'].values())
+
+            # Build constructor results
+            constructor_results = []
+            for team_id, data in constructor_race_data.items():
+                total_points = sum(race['points'] for race in data['races'])
+                constructor_results.append({
+                    'teamName': data['teamName'],
+                    'teamLogo': '',  # TODO: Add team logos
+                    'totalPoints': total_points,
+                    'raceResults': data['races']
+                })
+
+            # Sort by total points descending
+            constructor_results.sort(key=lambda x: x['totalPoints'], reverse=True)
+
+            conn.close()
+
+            return json_safe({
+                'year': year,
+                'raceMetadata': race_metadata,
+                'driverResults': driver_results,
+                'constructorResults': constructor_results
+            })
+
+        except Exception as e:
+            logger.error(f"Error getting complete standings: {e}")
+            raise HTTPException(500, str(e))
+
     return app
 
 
