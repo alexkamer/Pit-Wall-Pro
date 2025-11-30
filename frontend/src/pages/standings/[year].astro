@@ -287,7 +287,9 @@ const getTeamForDriver = (driverAbbr: string, roundNumber: number): string | nul
                 <td class="px-3 py-3 whitespace-nowrap sticky left-[3.06rem] bg-gray-900 z-10 min-w-48">
                   <div class="flex items-center gap-3">
                     {driver.teamLogo && (
-                      <img src={driver.teamLogo} alt={driver.teamName} class="h-6 w-auto object-contain" />
+                      <div class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center p-2" style={`background-color: ${driver.teamColor || '#374151'}`}>
+                        <img src={driver.teamLogo} alt={driver.teamName} class="w-full h-full object-contain" style="filter: drop-shadow(0 0 0.5px rgba(0,0,0,0.3));" />
+                      </div>
                     )}
                     <div class="flex flex-col">
                       <div class="font-medium">{driver.driverName}</div>
@@ -390,7 +392,9 @@ const getTeamForDriver = (driverAbbr: string, roundNumber: number): string | nul
                 <td class="px-3 py-3 whitespace-nowrap sticky left-[3.06rem] bg-gray-900 z-10 min-w-48">
                   <div class="flex items-center gap-3">
                     {team.teamLogo && (
-                      <img src={team.teamLogo} alt={team.teamName} class="h-8 w-auto object-contain" />
+                      <div class="flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center p-2.5" style={`background-color: ${team.teamColor || '#374151'}`}>
+                        <img src={team.teamLogo} alt={team.teamName} class="w-full h-full object-contain" style="filter: drop-shadow(0 0 0.5px rgba(0,0,0,0.3));" />
+                      </div>
                     )}
                     <div class="font-medium">{team.teamName}</div>
                   </div>

@@ -373,6 +373,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                         d.display_name as driver_name,
                         t.display_name as team_name,
                         t.logo_url as team_logo,
+                        t.color as team_color,
                         r.round_number,
                         ROW_NUMBER() OVER (PARTITION BY d.id ORDER BY r.round_number DESC) as rn
                     FROM session_results sr
@@ -382,7 +383,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                     JOIN races r ON rs.race_espn_event_id = r.espn_event_id
                     WHERE r.year = ? AND rs.session_type = 'Race'
                 )
-                SELECT driver_id, abbreviation, driver_name, team_name, team_logo
+                SELECT driver_id, abbreviation, driver_name, team_name, team_logo, team_color
                 FROM driver_latest_team
                 WHERE rn = 1
                 ORDER BY driver_name
@@ -454,15 +455,36 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                     'sprintWinner': sprint_winners.get(round_num)
                 })
 
-            # F1 2024 points system
-            points_system = {
-                1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1
-            }
+            # Get year-appropriate F1 points system
+            def get_points_system(year: int) -> dict:
+                """Return the points system for a given year."""
+                if year >= 2010:
+                    return {1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1}
+                elif year >= 2003:
+                    return {1: 10, 2: 8, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1}
+                elif year >= 1991:
+                    return {1: 10, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                elif year >= 1961:
+                    return {1: 9, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                elif year == 1960:
+                    return {1: 8, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                else:  # 1950-1959
+                    return {1: 8, 2: 6, 3: 4, 4: 3, 5: 2}
 
-            # F1 2024 sprint points system (top 8 only)
-            sprint_points_system = {
-                1: 8, 2: 7, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1
-            }
+            def has_fastest_lap_point(year: int) -> bool:
+                """Check if fastest lap point was awarded in this year."""
+                # Fastest lap point: 1950-1959 and 2019+
+                return year <= 1959 or year >= 2019
+
+            def get_sprint_points_system(year: int) -> dict:
+                """Return sprint points system for a given year (2021+)."""
+                if year >= 2021:
+                    return {1: 8, 2: 7, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1}
+                return {}
+
+            points_system = get_points_system(year)
+            sprint_points_system = get_sprint_points_system(year)
+            fastest_lap_enabled = has_fastest_lap_point(year)
 
             # Get driver race-by-race results with calculated points (Race + Sprint combined)
             cursor.execute("""
@@ -513,9 +535,12 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                 # Calculate points based on session type
                 if session_type == 'Race':
                     race_points = points_system.get(position, 0)
-                    # Add 1 point for fastest lap if finished in top 10
-                    if row['fastest_lap'] and position and position <= 10:
-                        race_points += 1
+                    # Add 1 point for fastest lap if enabled for this year
+                    if fastest_lap_enabled and row['fastest_lap'] and position:
+                        # For 2019+: must finish in top 10
+                        # For 1950-1959: any finishing position gets the point
+                        if year <= 1959 or position <= 10:
+                            race_points += 1
                     driver_race_data[driver_id]['races'][round_number]['points'] += race_points
                 elif session_type == 'Sprint Race':
                     sprint_points = sprint_points_system.get(position, 0)
@@ -552,6 +577,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                     'driverAbbreviation': data['info']['abbreviation'],
                     'teamName': data['info']['team_name'],
                     'teamLogo': data['info'].get('team_logo'),
+                    'teamColor': data['info'].get('team_color'),
                     'totalPoints': total_points,
                     'raceResults': all_race_results
                 })
@@ -612,9 +638,12 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                             pos = int(pos_str)
                             if session_type == 'Race':
                                 team_points += points_system.get(pos, 0)
-                                if fastest_str == '1' and pos <= 10:
-                                    team_had_fastest = True
-                            elif session_type == 'Sprint':
+                                if fastest_lap_enabled and fastest_str == '1':
+                                    # For 2019+: must finish in top 10
+                                    # For 1950-1959: any finishing position gets the point
+                                    if year <= 1959 or pos <= 10:
+                                        team_had_fastest = True
+                            elif session_type == 'Sprint Race':
                                 team_points += sprint_points_system.get(pos, 0)
                         except:
                             pass
@@ -628,20 +657,22 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
             for team_id in constructor_race_data:
                 constructor_race_data[team_id]['races'] = list(constructor_race_data[team_id]['races'].values())
 
-            # Get team logos for constructors
+            # Get team logos and colors for constructors
             cursor.execute("""
-                SELECT id, logo_url
+                SELECT id, logo_url, color
                 FROM teams
             """)
-            team_logos = {row['id']: row['logo_url'] for row in cursor.fetchall()}
+            team_data = {row['id']: {'logo_url': row['logo_url'], 'color': row['color']} for row in cursor.fetchall()}
 
             # Build constructor results
             constructor_results = []
             for team_id, data in constructor_race_data.items():
                 total_points = sum(race['points'] for race in data['races'])
+                team_info = team_data.get(team_id, {})
                 constructor_results.append({
                     'teamName': data['teamName'],
-                    'teamLogo': team_logos.get(team_id),
+                    'teamLogo': team_info.get('logo_url'),
+                    'teamColor': team_info.get('color'),
                     'totalPoints': total_points,
                     'raceResults': data['races']
                 })
