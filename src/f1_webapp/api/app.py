@@ -344,6 +344,103 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
             logger.error(f"Error fetching schedule: {e}")
             raise HTTPException(500, str(e))
 
+    @app.get("/fastf1/race-results/{year}/{round_number}")
+    def get_race_results(year: int, round_number: int):
+        """Get complete race results from database.
+
+        Args:
+            year: Championship year
+            round_number: Race round number
+        """
+        import sqlite3
+        try:
+            import os
+            db_path = os.path.join(os.path.dirname(__file__), '../../../f1_data.db')
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Get race info
+            cursor.execute("""
+                SELECT event_name, country, location, event_date
+                FROM races
+                WHERE year = ? AND round_number = ?
+            """, (year, round_number))
+
+            race_info = cursor.fetchone()
+            if not race_info:
+                raise HTTPException(404, f"Race not found for {year} round {round_number}")
+
+            # Get race results
+            cursor.execute("""
+                SELECT
+                    sr.position,
+                    sr.grid_position,
+                    d.display_name as driver_name,
+                    d.abbreviation,
+                    d.number as driver_number,
+                    t.display_name as team_name,
+                    t.logo_url as team_logo,
+                    sr.laps_completed,
+                    sr.status,
+                    sr.fastest_lap,
+                    sr.points
+                FROM session_results sr
+                JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                JOIN drivers d ON sr.driver_id = d.id
+                LEFT JOIN teams t ON sr.team_id = t.id
+                WHERE r.year = ? AND r.round_number = ? AND rs.session_type = 'Race'
+                ORDER BY sr.position ASC NULLS LAST
+            """, (year, round_number))
+
+            results = [dict(row) for row in cursor.fetchall()]
+
+            # Calculate points if not in database
+            def get_points_for_position(position: int, year: int) -> int:
+                """Get points for a finishing position based on the year's points system."""
+                if year >= 2010:
+                    points_system = {1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1}
+                elif year >= 2003:
+                    points_system = {1: 10, 2: 8, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1}
+                elif year >= 1991:
+                    points_system = {1: 10, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                elif year >= 1961:
+                    points_system = {1: 9, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                elif year == 1960:
+                    points_system = {1: 8, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                else:  # 1950-1959
+                    points_system = {1: 8, 2: 6, 3: 4, 4: 3, 5: 2}
+                return points_system.get(position, 0)
+
+            # Add calculated points if missing
+            for result in results:
+                if result['points'] is None and result['position']:
+                    result['points'] = get_points_for_position(result['position'], year)
+                    # Add 1 point for fastest lap if applicable (2019+)
+                    if year >= 2019 and result['fastest_lap'] == 1 and result['position'] <= 10:
+                        result['points'] += 1
+
+            conn.close()
+
+            return json_safe({
+                'race': {
+                    'year': year,
+                    'roundNumber': round_number,
+                    'eventName': race_info['event_name'],
+                    'country': race_info['country'],
+                    'location': race_info['location'],
+                    'date': race_info['event_date']
+                },
+                'results': results
+            })
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error fetching race results: {e}")
+            raise HTTPException(500, str(e))
+
     @app.get("/fastf1/session/{year}/{gp}/{session_type}")
     def get_session_info(year: int, gp: str, session_type: str):
         """Get session information and results.
