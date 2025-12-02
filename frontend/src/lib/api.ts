@@ -117,6 +117,10 @@ export async function getSchedule(year: number) {
   return fetchAPI(`/fastf1/schedule/${year}`);
 }
 
+export async function getRaceResults(year: number, roundNumber: number) {
+  return fetchAPI(`/fastf1/race-results/${year}/${roundNumber}`);
+}
+
 // Get race metadata (winners, pole position) for each round from backend
 export async function getRaceMetadata(year: number) {
   const data = await fetchAPI<any>(`/standings/complete/${year}`);

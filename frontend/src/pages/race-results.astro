@@ -76,9 +76,14 @@ const { race, results } = data;
                   </div>
                 </td>
                 <td class="px-6 py-4">
-                  <div class="flex items-center gap-2">
+                  <div class="flex items-center gap-3">
                     {result.driver_number && (
-                      <span class="text-gray-500 font-medium">{result.driver_number}</span>
+                      <span
+                        class="px-2 py-1 rounded font-bold text-xs text-white"
+                        style={`background-color: ${result.team_color || '#666'};`}
+                      >
+                        #{result.driver_number}
+                      </span>
                     )}
                     <span class="font-medium">{result.driver_name}</span>
                     {result.fastest_lap === 1 && (

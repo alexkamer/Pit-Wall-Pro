@@ -22,7 +22,7 @@ try {
 
 const driver = profileData?.driver;
 const seasons = profileData?.seasons || [];
-const recentRaces = profileData?.recentRaces || [];
+const raceResults = profileData?.raceResults || [];
 
 // Country to flag emoji mapping
 const getNationalityFlag = (nationality: string): string => {
@@ -177,21 +177,13 @@ const calculateAge = (birthDate: string) => {
               <div class="text-4xl font-bold text-orange-500 mb-2">{driver.podiums || 0}</div>
               <div class="text-sm text-gray-400">Podiums</div>
             </div>
-            <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6 text-center">
-              <div class="text-4xl font-bold text-blue-500 mb-2">{driver.poles || 0}</div>
-              <div class="text-sm text-gray-400">Pole Positions</div>
-            </div>
-            <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6 text-center">
-              <div class="text-4xl font-bold text-purple-500 mb-2">{driver.fastest_laps || 0}</div>
-              <div class="text-sm text-gray-400">Fastest Laps</div>
-            </div>
           </div>
         </div>
 
-        <!-- Season by Season -->
+        <!-- Career Performance by Year -->
         {seasons.length > 0 && (
           <div class="mb-8">
-            <h2 class="text-3xl font-bold text-white mb-6">Season by Season</h2>
+            <h2 class="text-3xl font-bold text-white mb-6">Career Performance by Year</h2>
             <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
               <div class="overflow-x-auto">
                 <table class="w-full">
@@ -202,32 +194,35 @@ const calculateAge = (birthDate: string) => {
                       <th class="px-6 py-4 text-center text-sm font-semibold text-gray-300">Races</th>
                       <th class="px-6 py-4 text-center text-sm font-semibold text-gray-300">Wins</th>
                       <th class="px-6 py-4 text-center text-sm font-semibold text-gray-300">Podiums</th>
-                      <th class="px-6 py-4 text-center text-sm font-semibold text-gray-300">Poles</th>
+                      <th class="px-6 py-4 text-center text-sm font-semibold text-gray-300">Win Rate</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-gray-800">
-                    {seasons.map((season: any) => (
-                      <tr class="hover:bg-gray-800/50 transition-colors">
-                        <td class="px-6 py-4 text-white font-medium">{season.year}</td>
-                        <td class="px-6 py-4">
-                          <div class="flex items-center gap-2">
-                            {season.team_logo && (
-                              <img
-                                src={season.team_logo}
-                                alt={season.team_name}
-                                class="h-6 object-contain"
-                                onerror="this.style.display='none'"
-                              />
-                            )}
-                            <span class="text-gray-300">{season.team_name || 'Unknown'}</span>
-                          </div>
-                        </td>
-                        <td class="px-6 py-4 text-center text-gray-300">{season.races}</td>
-                        <td class="px-6 py-4 text-center text-yellow-500 font-semibold">{season.wins}</td>
-                        <td class="px-6 py-4 text-center text-orange-500 font-semibold">{season.podiums}</td>
-                        <td class="px-6 py-4 text-center text-blue-500 font-semibold">{season.poles}</td>
-                      </tr>
-                    ))}
+                    {seasons.map((season: any) => {
+                      const winRate = season.races > 0 ? ((season.wins / season.races) * 100).toFixed(1) : '0.0';
+                      return (
+                        <tr class="hover:bg-gray-800/50 transition-colors">
+                          <td class="px-6 py-4 text-white font-medium">{season.year}</td>
+                          <td class="px-6 py-4">
+                            <div class="flex items-center gap-2">
+                              {season.team_logo && !season.team_logo.includes('fallback') && (
+                                <img
+                                  src={season.team_logo}
+                                  alt={season.team_name}
+                                  class="h-6 object-contain"
+                                  onerror="this.style.display='none'"
+                                />
+                              )}
+                              <span class="text-gray-300">{season.team_name || 'Unknown'}</span>
+                            </div>
+                          </td>
+                          <td class="px-6 py-4 text-center text-gray-300">{season.races}</td>
+                          <td class="px-6 py-4 text-center text-yellow-500 font-semibold">{season.wins}</td>
+                          <td class="px-6 py-4 text-center text-orange-500 font-semibold">{season.podiums}</td>
+                          <td class="px-6 py-4 text-center text-gray-300">{winRate}%</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -235,39 +230,126 @@ const calculateAge = (birthDate: string) => {
           </div>
         )}
 
-        <!-- Recent Races -->
-        {recentRaces.length > 0 && (
-          <div>
-            <h2 class="text-3xl font-bold text-white mb-6">Recent Races</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {recentRaces.map((race: any) => (
-                <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6 hover:border-gray-700 transition-colors">
-                  <div class="flex justify-between items-start mb-3">
-                    <div>
-                      <h3 class="text-lg font-bold text-white">{race.event_name}</h3>
-                      <p class="text-sm text-gray-400">{race.year} • Round {race.round_number}</p>
-                    </div>
-                    <div class={`text-3xl font-bold ${
-                      race.position === 1 ? 'text-yellow-500' :
-                      race.position <= 3 ? 'text-orange-500' :
-                      race.position <= 10 ? 'text-white' : 'text-gray-500'
-                    }`}>
-                      P{race.position}
-                    </div>
-                  </div>
-                  <div class="flex items-center justify-between text-sm">
-                    <span class="text-gray-400">{race.team_name}</span>
-                    {race.fastest_lap === 1 && (
-                      <span class="bg-purple-600 text-white text-xs px-2 py-1 rounded-full">
-                        Fastest Lap
-                      </span>
-                    )}
-                  </div>
+        <!-- Race by Race Results -->
+        {raceResults.length > 0 && (() => {
+          // Group races by year
+          const racesByYear = {};
+          raceResults.forEach((race) => {
+            if (!racesByYear[race.year]) {
+              racesByYear[race.year] = [];
+            }
+            racesByYear[race.year].push(race);
+          });
+
+          // Get all unique years, sorted descending
+          const years = Object.keys(racesByYear).map(Number).sort((a, b) => b - a);
+
+          // Get the maximum number of races in any year
+          const maxRaces = Math.max(...years.map(year => racesByYear[year].length));
+
+          // Create a map of year to season data for points and championship position
+          const seasonMap = {};
+          seasons.forEach((season) => {
+            seasonMap[season.year] = season;
+          });
+
+          return (
+            <div>
+              <h2 class="text-3xl font-bold text-white mb-6">Race by Race Results</h2>
+              <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
+                <div class="overflow-x-auto">
+                  <table class="w-full">
+                    <thead class="bg-gray-800">
+                      <tr>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-300 sticky left-0 bg-gray-800 z-10">Year</th>
+                        {Array.from({length: maxRaces}, (_, i) => (
+                          <th class="px-3 py-3 text-center text-xs font-semibold text-gray-300 min-w-[80px]">
+                            R{i + 1}
+                          </th>
+                        ))}
+                        <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 sticky right-20 bg-gray-800 z-10 border-l border-gray-700">Points</th>
+                        <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 sticky right-0 bg-gray-800 z-10 border-l border-gray-700">Pos</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-800">
+                      {years.map((year) => {
+                        const yearRaces = racesByYear[year].sort((a, b) => a.round_number - b.round_number);
+                        const seasonData = seasonMap[year] || {};
+                        const totalPoints = seasonData.points || 0;
+                        const championshipPos = seasonData.championship_position;
+
+                        return (
+                          <tr class="hover:bg-gray-800/50 transition-colors">
+                            <td class="px-4 py-3 text-white font-medium sticky left-0 bg-gray-900/50 z-10">{year}</td>
+                            {Array.from({length: maxRaces}, (_, i) => {
+                              const race = yearRaces[i];
+                              if (!race) {
+                                return <td class="px-3 py-3 text-center text-gray-700">-</td>;
+                              }
+
+                              const position = race.position;
+                              const gridPosition = race.grid_position;
+                              const hasFastestLap = race.fastest_lap;
+
+                              return (
+                                <td class="px-3 py-3 text-center group relative">
+                                  <div class="flex flex-col items-center gap-0.5">
+                                    {position ? (
+                                      <span class={`text-sm font-semibold ${
+                                        position === 1 ? 'text-yellow-500' :
+                                        position === 2 ? 'text-gray-300' :
+                                        position === 3 ? 'text-orange-500' :
+                                        position <= 10 ? 'text-gray-400' : 'text-gray-600'
+                                      }`}>
+                                        {position}
+                                      </span>
+                                    ) : (
+                                      <span class="text-xs text-red-500 font-medium">DNF</span>
+                                    )}
+                                    <div class="flex items-center gap-1 text-xs text-gray-500">
+                                      {gridPosition && <span>({gridPosition})</span>}
+                                      {hasFastestLap && <span class="text-purple-400">●</span>}
+                                    </div>
+                                  </div>
+                                  {/* Tooltip */}
+                                  <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-950 border border-gray-700 rounded-lg text-xs text-white whitespace-nowrap opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-20 pointer-events-none">
+                                    <div class="font-semibold mb-1">{race.event_name}</div>
+                                    <div class="text-gray-400">Round {race.round_number}</div>
+                                    {gridPosition && <div class="text-gray-400">Grid: P{gridPosition}</div>}
+                                    {position && <div class="text-gray-400">Finish: P{position}</div>}
+                                    {!position && <div class="text-red-400">Did Not Finish</div>}
+                                    {hasFastestLap && <div class="text-purple-400">Fastest Lap</div>}
+                                    <div class="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-l-transparent border-r-transparent border-t-gray-700"></div>
+                                  </div>
+                                </td>
+                              );
+                            })}
+                            <td class="px-4 py-3 text-center font-semibold text-white sticky right-20 bg-gray-900/50 z-10 border-l border-gray-700">{totalPoints}</td>
+                            <td class={`px-4 py-3 text-center font-semibold sticky right-0 bg-gray-900/50 z-10 border-l border-gray-700 ${
+                              championshipPos === 1 ? 'text-yellow-500' :
+                              championshipPos === 2 ? 'text-gray-300' :
+                              championshipPos === 3 ? 'text-orange-500' :
+                              championshipPos && championshipPos <= 10 ? 'text-gray-400' : 'text-gray-600'
+                            }`}>
+                              {championshipPos || '-'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-              ))}
+              </div>
+              <div class="mt-4 flex flex-wrap gap-4 text-sm text-gray-400">
+                <div>Position shown, (grid position) below</div>
+                <div class="flex items-center gap-1"><span class="text-purple-400">●</span> = Fastest Lap</div>
+                <div><span class="text-yellow-500">1</span> = Win</div>
+                <div><span class="text-orange-500">3</span> = Podium</div>
+                <div><span class="text-red-500">DNF</span> = Did Not Finish</div>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     )}
   </div>

@@ -381,6 +381,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                     d.number as driver_number,
                     t.display_name as team_name,
                     t.logo_url as team_logo,
+                    t.color as team_color,
                     sr.laps_completed,
                     sr.status,
                     sr.fastest_lap,
