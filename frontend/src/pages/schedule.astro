@@ -1,14 +1,33 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { getSchedule } from '../lib/api';
+import { getSchedule, getAvailableSeasons } from '../lib/api';
 
-const currentYear = 2025;
+// Get the year from URL params, default to current year (2025)
+const url = new URL(Astro.request.url);
+const yearParam = url.searchParams.get('year');
+const currentYear = yearParam ? parseInt(yearParam) : 2025;
+
 const schedule = await getSchedule(currentYear);
+const { seasons } = await getAvailableSeasons();
 ---
 
 <Layout title={`F1 Schedule ${currentYear}`}>
   <div class="max-w-7xl mx-auto px-4 py-12">
-    <h1 class="text-4xl font-bold mb-8">{currentYear} Race Calendar</h1>
+    <div class="flex justify-between items-center mb-8">
+      <h1 class="text-4xl font-bold">{currentYear} Race Calendar</h1>
+
+      <div class="flex items-center gap-3">
+        <label for="season-select" class="text-sm text-gray-400">Season:</label>
+        <select
+          id="season-select"
+          class="bg-gray-800 text-white border border-gray-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+        >
+          {seasons.map((year) => (
+            <option value={year} selected={year === currentYear}>{year}</option>
+          ))}
+        </select>
+      </div>
+    </div>
 
     <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
       <table class="w-full">
@@ -18,17 +37,56 @@ const schedule = await getSchedule(currentYear);
             <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Grand Prix</th>
             <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Location</th>
             <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Date</th>
+            <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Podium</th>
+            <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Winning Constructor</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-800">
           {schedule.map((race) => {
             const date = new Date(race.EventDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            const podium = race.Podium || [];
+            const winningConstructor = race.WinningConstructor;
             return (
               <tr class="hover:bg-gray-800/50">
                 <td class="px-6 py-4">{race.RoundNumber}</td>
                 <td class="px-6 py-4 font-medium">{race.EventName}</td>
                 <td class="px-6 py-4 text-gray-400">{race.Location}, {race.Country}</td>
                 <td class="px-6 py-4">{date}</td>
+                <td class="px-6 py-4">
+                  {podium.length > 0 ? (
+                    <div class="flex gap-2">
+                      {podium.map((driver, index) => (
+                        <span class={`px-2 py-1 rounded text-xs font-medium ${
+                          index === 0 ? 'bg-yellow-500/20 text-yellow-400' :
+                          index === 1 ? 'bg-gray-500/20 text-gray-300' :
+                          'bg-orange-600/20 text-orange-400'
+                        }`}>
+                          {driver}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span class="text-gray-600 text-sm">-</span>
+                  )}
+                </td>
+                <td class="px-6 py-4">
+                  {winningConstructor ? (
+                    <div class="flex items-center gap-2">
+                      {winningConstructor.logo && (
+                        <img
+                          src={winningConstructor.logo}
+                          alt={winningConstructor.name}
+                          class="h-6 w-auto object-contain"
+                        />
+                      )}
+                      <span class="px-3 py-1 rounded bg-blue-500/20 text-blue-400 text-sm font-medium">
+                        {winningConstructor.name}
+                      </span>
+                    </div>
+                  ) : (
+                    <span class="text-gray-600 text-sm">-</span>
+                  )}
+                </td>
               </tr>
             );
           })}
@@ -37,3 +95,12 @@ const schedule = await getSchedule(currentYear);
     </div>
   </div>
 </Layout>
+
+<script>
+  // Handle season selection
+  const seasonSelect = document.getElementById('season-select') as HTMLSelectElement;
+  seasonSelect.addEventListener('change', (e) => {
+    const selectedYear = (e.target as HTMLSelectElement).value;
+    window.location.href = `/schedule?year=${selectedYear}`;
+  });
+</script>

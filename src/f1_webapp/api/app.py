@@ -174,16 +174,168 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
 
     # FastF1 Endpoints
 
+    @app.get("/fastf1/seasons")
+    def get_available_seasons():
+        """Get list of available seasons from the database.
+
+        Returns:
+            List of years that have race data
+        """
+        import sqlite3
+        try:
+            import os
+            db_path = os.path.join(os.path.dirname(__file__), '../../../f1_data.db')
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT DISTINCT year FROM races ORDER BY year DESC")
+            years = [row[0] for row in cursor.fetchall()]
+            conn.close()
+
+            return {"seasons": years}
+        except Exception as e:
+            logger.error(f"Error fetching seasons: {e}")
+            raise HTTPException(500, str(e))
+
     @app.get("/fastf1/schedule/{year}")
     def get_schedule(year: int):
-        """Get season schedule.
+        """Get season schedule with podium finishers.
 
         Args:
             year: Championship year
         """
+        import sqlite3
         try:
             schedule = ff1.get_event_schedule(year)
-            return dataframe_to_json_safe(schedule)
+            schedule_data = dataframe_to_json_safe(schedule)
+
+            # Get podium finishers for each race
+            import os
+            db_path = os.path.join(os.path.dirname(__file__), '../../../f1_data.db')
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Query to get top 3 finishers for each race
+            cursor.execute("""
+                SELECT
+                    r.round_number,
+                    d.abbreviation,
+                    sr.position
+                FROM races r
+                JOIN race_sessions rs ON r.espn_event_id = rs.race_espn_event_id
+                JOIN session_results sr ON rs.espn_competition_id = sr.session_espn_competition_id
+                JOIN drivers d ON sr.driver_id = d.id
+                WHERE r.year = ? AND rs.session_type = 'Race' AND sr.position <= 3
+                ORDER BY r.round_number, sr.position
+            """, (year,))
+
+            # Build podium map
+            podium_map = {}
+            for row in cursor.fetchall():
+                round_num = row['round_number']
+                if round_num not in podium_map:
+                    podium_map[round_num] = []
+                podium_map[round_num].append(row['abbreviation'])
+
+            # Get year-appropriate points system for calculating winning constructor
+            def get_points_for_position(position: int, year: int) -> int:
+                """Get points for a finishing position based on the year's points system."""
+                if year >= 2010:
+                    points_system = {1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1}
+                elif year >= 2003:
+                    points_system = {1: 10, 2: 8, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1}
+                elif year >= 1991:
+                    points_system = {1: 10, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                elif year >= 1961:
+                    points_system = {1: 9, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                elif year == 1960:
+                    points_system = {1: 8, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                else:  # 1950-1959
+                    points_system = {1: 8, 2: 6, 3: 4, 4: 3, 5: 2}
+                return points_system.get(position, 0)
+
+            # Query to get winning constructor for each race
+            # Need to calculate based on the year's points system
+            cursor.execute("""
+                SELECT
+                    r.round_number,
+                    r.year,
+                    t.display_name as team_name,
+                    t.logo_url,
+                    sr.position
+                FROM races r
+                JOIN race_sessions rs ON r.espn_event_id = rs.race_espn_event_id
+                JOIN session_results sr ON rs.espn_competition_id = sr.session_espn_competition_id
+                JOIN teams t ON sr.team_id = t.id
+                WHERE r.year = ? AND rs.session_type = 'Race' AND sr.position IS NOT NULL
+                ORDER BY r.round_number, sr.position
+            """, (year,))
+
+            # Team logo mapping - Using official F1 team logos
+            TEAM_LOGOS = {
+                'McLaren': 'https://media.formula1.com/content/dam/fom-website/teams/2025/mclaren-logo.png',
+                'Mercedes': 'https://media.formula1.com/content/dam/fom-website/teams/2025/mercedes-logo.png',
+                'Red Bull': 'https://media.formula1.com/content/dam/fom-website/teams/2025/red-bull-racing-logo.png',
+                'Ferrari': 'https://media.formula1.com/content/dam/fom-website/teams/2025/ferrari-logo.png',
+                'Aston Martin': 'https://media.formula1.com/content/dam/fom-website/teams/2025/aston-martin-logo.png',
+                'Alpine': 'https://media.formula1.com/content/dam/fom-website/teams/2025/alpine-logo.png',
+                'Williams': 'https://media.formula1.com/content/dam/fom-website/teams/2025/williams-logo.png',
+                'Racing Bulls': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/rb-logo.png',
+                'Sauber': 'https://media.formula1.com/content/dam/fom-website/teams/2025/kick-sauber-logo.png',
+                'Haas': 'https://media.formula1.com/d_team_car_fallback_image.png/content/dam/fom-website/teams/2024/haas-f1-team-logo.png'
+            }
+
+            # Build winning constructor map
+            winning_constructor_map = {}
+            current_round = None
+            team_points = {}
+            team_info = {}  # Store team info including logo
+
+            for row in cursor.fetchall():
+                round_num = row['round_number']
+                team_name = row['team_name']
+                position = row['position']
+                race_year = row['year']
+                logo_url = row['logo_url'] or TEAM_LOGOS.get(team_name, '')
+
+                # Store team info
+                if team_name not in team_info:
+                    team_info[team_name] = {'logo': logo_url}
+
+                # If we've moved to a new round, calculate winner for previous round
+                if current_round is not None and round_num != current_round:
+                    if team_points:
+                        winning_team_name = max(team_points.items(), key=lambda x: x[1])[0]
+                        winning_constructor_map[current_round] = {
+                            'name': winning_team_name,
+                            'logo': team_info[winning_team_name]['logo']
+                        }
+                    team_points = {}
+
+                current_round = round_num
+
+                # Add points for this position
+                points = get_points_for_position(position, race_year)
+                team_points[team_name] = team_points.get(team_name, 0) + points
+
+            # Don't forget the last round
+            if current_round is not None and team_points:
+                winning_team_name = max(team_points.items(), key=lambda x: x[1])[0]
+                winning_constructor_map[current_round] = {
+                    'name': winning_team_name,
+                    'logo': team_info[winning_team_name]['logo']
+                }
+
+            conn.close()
+
+            # Add podium data and winning constructor to schedule
+            for race in schedule_data:
+                round_num = race.get('RoundNumber')
+                race['Podium'] = podium_map.get(round_num, [])
+                race['WinningConstructor'] = winning_constructor_map.get(round_num, None)
+
+            return schedule_data
         except Exception as e:
             logger.error(f"Error fetching schedule: {e}")
             raise HTTPException(500, str(e))
@@ -451,9 +603,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                     d.*,
                     COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' THEN sr.session_espn_competition_id END) as total_races,
                     COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' AND sr.position = 1 THEN sr.session_espn_competition_id END) as wins,
-                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' AND sr.position <= 3 THEN sr.session_espn_competition_id END) as podiums,
-                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Qualifying' AND sr.position = 1 THEN sr.session_espn_competition_id END) as poles,
-                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' AND sr.fastest_lap = 1 THEN sr.session_espn_competition_id END) as fastest_laps
+                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' AND sr.position <= 3 THEN sr.session_espn_competition_id END) as podiums
                 FROM drivers d
                 LEFT JOIN session_results sr ON d.id = sr.driver_id
                 LEFT JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
@@ -474,21 +624,130 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                     COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' THEN sr.session_espn_competition_id END) as races,
                     COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' AND sr.position = 1 THEN sr.session_espn_competition_id END) as wins,
                     COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' AND sr.position <= 3 THEN sr.session_espn_competition_id END) as podiums,
-                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Qualifying' AND sr.position = 1 THEN sr.session_espn_competition_id END) as poles,
                     t.display_name as team_name,
                     t.logo_url as team_logo
                 FROM session_results sr
                 JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
                 JOIN races r ON rs.race_espn_event_id = r.espn_event_id
                 LEFT JOIN teams t ON sr.team_id = t.id
-                WHERE sr.driver_id = ? AND rs.session_type IN ('Race', 'Qualifying')
+                WHERE sr.driver_id = ? AND rs.session_type = 'Race'
                 GROUP BY r.year, t.id
                 ORDER BY r.year DESC
             """, (driver_id,))
 
             seasons = [dict(row) for row in cursor.fetchall()]
 
-            # Get recent race results (last 10 races)
+            # Calculate points and championship position for each season
+            def get_points_system(year: int) -> dict:
+                if year >= 2010:
+                    return {1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1}
+                elif year >= 2003:
+                    return {1: 10, 2: 8, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1}
+                elif year >= 1991:
+                    return {1: 10, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                elif year >= 1961:
+                    return {1: 9, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                elif year == 1960:
+                    return {1: 8, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                else:
+                    return {1: 8, 2: 6, 3: 4, 4: 3, 5: 2}
+
+            def get_sprint_points_system(year: int) -> dict:
+                if year >= 2021:
+                    return {1: 8, 2: 7, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1}
+                return {}
+
+            def has_fastest_lap_point(year: int) -> bool:
+                return year <= 1959 or year >= 2019
+
+            def is_half_points_race(year: int, round_number: int) -> bool:
+                """Check if a race awarded half points (usually due to red flag/shortened race)."""
+                half_points_races = {
+                    1984: [6],  # Monaco 1984
+                    2021: [12], # Belgian GP 2021
+                }
+                return round_number in half_points_races.get(year, [])
+
+            # Enrich seasons with points and championship position
+            for season in seasons:
+                year = season['year']
+                points_system = get_points_system(year)
+                sprint_points_system = get_sprint_points_system(year)
+                fastest_lap_enabled = has_fastest_lap_point(year)
+
+                # Get all results for this driver in this year
+                cursor.execute("""
+                    SELECT sr.position, sr.fastest_lap, rs.session_type, r.round_number
+                    FROM session_results sr
+                    JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                    JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                    WHERE sr.driver_id = ? AND r.year = ? AND rs.session_type IN ('Race', 'Sprint Race')
+                """, (driver_id, year))
+
+                total_points = 0
+                for result in cursor.fetchall():
+                    position = result[0]
+                    fastest_lap = result[1]
+                    session_type = result[2]
+                    round_number = result[3]
+
+                    if session_type == 'Race' and position:
+                        race_points = points_system.get(position, 0)
+
+                        # Apply half points if this was a shortened race
+                        if is_half_points_race(year, round_number):
+                            race_points = race_points / 2
+
+                        if fastest_lap_enabled and fastest_lap and position:
+                            if year <= 1959 or position <= 10:
+                                race_points += 1
+                        total_points += race_points
+                    elif session_type == 'Sprint Race' and position:
+                        total_points += sprint_points_system.get(position, 0)
+
+                season['points'] = total_points
+
+                # Get championship position for this year
+                cursor.execute("""
+                    WITH driver_points AS (
+                        SELECT
+                            sr.driver_id,
+                            SUM(
+                                CASE
+                                    WHEN rs.session_type = 'Race' AND sr.position IS NOT NULL THEN
+                                        CASE sr.position
+                                            WHEN 1 THEN ?
+                                            WHEN 2 THEN ?
+                                            WHEN 3 THEN ?
+                                            WHEN 4 THEN ?
+                                            WHEN 5 THEN ?
+                                            WHEN 6 THEN ?
+                                            WHEN 7 THEN ?
+                                            WHEN 8 THEN ?
+                                            WHEN 9 THEN ?
+                                            WHEN 10 THEN ?
+                                            ELSE 0
+                                        END
+                                    ELSE 0
+                                END
+                            ) as total_points
+                        FROM session_results sr
+                        JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                        JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                        WHERE r.year = ? AND rs.session_type = 'Race'
+                        GROUP BY sr.driver_id
+                    )
+                    SELECT COUNT(*) + 1 as championship_position
+                    FROM driver_points
+                    WHERE total_points > (
+                        SELECT total_points FROM driver_points WHERE driver_id = ?
+                    )
+                """, tuple(points_system.get(i, 0) for i in range(1, 11)) + (year, driver_id))
+
+                result = cursor.fetchone()
+                season['championship_position'] = result[0] if result else None
+
+            # Get all race results (race-by-race)
             cursor.execute("""
                 SELECT
                     r.year,
@@ -497,25 +756,26 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                     r.country,
                     rs.session_type,
                     sr.position,
+                    sr.grid_position,
                     sr.fastest_lap,
-                    t.display_name as team_name
+                    t.display_name as team_name,
+                    t.logo_url as team_logo
                 FROM session_results sr
                 JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
                 JOIN races r ON rs.race_espn_event_id = r.espn_event_id
                 LEFT JOIN teams t ON sr.team_id = t.id
                 WHERE sr.driver_id = ? AND rs.session_type = 'Race'
                 ORDER BY r.year DESC, r.round_number DESC
-                LIMIT 10
             """, (driver_id,))
 
-            recent_races = [dict(row) for row in cursor.fetchall()]
+            race_results = [dict(row) for row in cursor.fetchall()]
 
             conn.close()
 
             return json_safe({
                 'driver': driver,
                 'seasons': seasons,
-                'recentRaces': recent_races
+                'raceResults': race_results
             })
 
         except HTTPException:

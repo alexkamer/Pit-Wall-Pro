@@ -109,6 +109,10 @@ export async function getConstructorStandings(year: number) {
   };
 }
 
+export async function getAvailableSeasons() {
+  return fetchAPI<{ seasons: number[] }>(`/fastf1/seasons`);
+}
+
 export async function getSchedule(year: number) {
   return fetchAPI(`/fastf1/schedule/${year}`);
 }
