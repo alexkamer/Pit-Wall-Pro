@@ -85,7 +85,9 @@ const { race, results } = data;
                         #{result.driver_number}
                       </span>
                     )}
-                    <span class="font-medium">{result.driver_name}</span>
+                    <a href={`/drivers/profile/${result.driver_id}`} class="font-medium hover:text-red-400 transition-colors">
+                      {result.driver_name}
+                    </a>
                     {result.fastest_lap === 1 && (
                       <span class="px-2 py-0.5 bg-purple-500/20 text-purple-400 text-xs rounded font-medium">
                         FL

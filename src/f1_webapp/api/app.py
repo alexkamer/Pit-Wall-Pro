@@ -376,6 +376,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                 SELECT
                     sr.position,
                     sr.grid_position,
+                    d.id as driver_id,
                     d.display_name as driver_name,
                     d.abbreviation,
                     d.number as driver_number,
