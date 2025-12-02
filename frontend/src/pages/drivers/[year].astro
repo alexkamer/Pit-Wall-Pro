@@ -1,0 +1,356 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { getDriversBySeason } from '../../lib/api';
+
+// Get year from dynamic route parameter
+const { year } = Astro.params;
+const currentYear = year ? parseInt(year) : 2024;
+const availableYears = Array.from({ length: 2025 - 1950 + 1 }, (_, i) => 2025 - i);
+
+// Fetch drivers data for the selected year with error handling
+let drivers: any[] = [];
+let error: string | null = null;
+
+try {
+  const driversData = await getDriversBySeason(currentYear);
+  drivers = driversData.drivers || [];
+} catch (e) {
+  error = e instanceof Error ? e.message : 'Failed to load drivers';
+  console.error(`Error fetching drivers for ${currentYear}:`, e);
+}
+
+// Country to flag emoji mapping - handles both country names and nationality adjectives
+const getNationalityFlag = (nationality: string): string => {
+  if (!nationality) return '🏁';
+
+  const countryToCode: Record<string, string> = {
+    // Country names (from ESPN API)
+    'Netherlands': 'NL',
+    'Britain': 'GB',
+    'Monaco': 'MC',
+    'Australia': 'AU',
+    'Spain': 'ES',
+    'Mexico': 'MX',
+    'Canada': 'CA',
+    'Germany': 'DE',
+    'France': 'FR',
+    'Finland': 'FI',
+    'Denmark': 'DK',
+    'China': 'CN',
+    'Japan': 'JP',
+    'Thailand': 'TH',
+    'USA': 'US',
+    'United States': 'US',
+    'Italy': 'IT',
+    'Austria': 'AT',
+    'Belgium': 'BE',
+    'Switzerland': 'CH',
+    'Brazil': 'BR',
+    'Argentina': 'AR',
+    'Colombia': 'CO',
+    'Venezuela': 'VE',
+    'Sweden': 'SE',
+    'Poland': 'PL',
+    'Russia': 'RU',
+    'New Zealand': 'NZ',
+    'South Africa': 'ZA',
+    'Portugal': 'PT',
+    'Ireland': 'IE',
+    'India': 'IN',
+    'Malaysia': 'MY',
+    // Adjective forms (backup)
+    'Dutch': 'NL',
+    'British': 'GB',
+    'Monegasque': 'MC',
+    'Australian': 'AU',
+    'Spanish': 'ES',
+    'Mexican': 'MX',
+    'Canadian': 'CA',
+    'German': 'DE',
+    'French': 'FR',
+    'Finnish': 'FI',
+    'Danish': 'DK',
+    'Chinese': 'CN',
+    'Japanese': 'JP',
+    'Thai': 'TH',
+    'American': 'US',
+    'Italian': 'IT',
+    'Austrian': 'AT',
+    'Belgian': 'BE',
+    'Swiss': 'CH',
+    'Brazilian': 'BR',
+    'Argentine': 'AR',
+    'Colombian': 'CO',
+    'Venezuelan': 'VE',
+    'Swedish': 'SE',
+    'Polish': 'PL',
+    'Russian': 'RU',
+  };
+
+  const code = countryToCode[nationality];
+  if (!code) return '🏁';
+
+  return String.fromCodePoint(
+    ...code.split('').map(char => 127397 + char.charCodeAt(0))
+  );
+};
+---
+
+<Layout title={`${currentYear} F1 Drivers`}>
+  <div class="max-w-7xl mx-auto px-4 py-8">
+    <!-- Header with Year Selector -->
+    <div class="flex justify-between items-center mb-8">
+      <div>
+        <h1 class="text-4xl font-bold text-white mb-2">{currentYear} Drivers</h1>
+        {!error && <p class="text-gray-400">{drivers.length} drivers competed in the {currentYear} season</p>}
+      </div>
+
+      <!-- Year Selector -->
+      <select
+        id="yearSelector"
+        class="bg-gray-800 border border-gray-700 text-white rounded-lg px-4 py-2 focus:ring-2 focus:ring-red-500 focus:outline-none"
+      >
+        {availableYears.map(y => (
+          <option value={y} selected={y === currentYear}>{y}</option>
+        ))}
+      </select>
+    </div>
+
+    <!-- Error Message -->
+    {error && (
+      <div class="bg-red-900/50 border border-red-700 rounded-lg p-6 mb-8">
+        <h2 class="text-xl font-bold text-red-400 mb-2">Error Loading Drivers</h2>
+        <p class="text-red-300">{error}</p>
+        <p class="text-gray-400 mt-2">Try selecting a different year or check if the backend is running.</p>
+      </div>
+    )}
+
+    <!-- Sort and Filter Controls -->
+    {!error && (
+    <div class="flex gap-4 mb-6 flex-wrap">
+      <button id="sortPoints" class="sort-btn active px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg hover:bg-gray-700 transition-colors text-white">
+        Championship Order
+      </button>
+      <button id="sortName" class="sort-btn px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg hover:bg-gray-700 transition-colors text-white">
+        A-Z
+      </button>
+      <button id="sortTeam" class="sort-btn px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg hover:bg-gray-700 transition-colors text-white">
+        By Team
+      </button>
+
+      <!-- Search Input -->
+      <input
+        type="text"
+        id="searchInput"
+        placeholder="Search drivers..."
+        class="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-red-500 focus:outline-none flex-grow max-w-md"
+      />
+    </div>
+    )}
+
+    <!-- Drivers Grid -->
+    {!error && (
+    <div id="driversGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      {drivers.map((driver: any, index: number) => (
+        <div
+          class="driver-card bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden hover:border-gray-700 transition-all duration-300 hover:transform hover:scale-105 cursor-pointer"
+          data-driver-name={driver.driverName.toLowerCase()}
+          data-team-name={driver.teamName.toLowerCase()}
+          data-nationality={driver.nationality}
+          data-points={driver.stats.totalPoints}
+        >
+          <!-- Team Color Bar -->
+          {driver.teamColor && (
+            <div
+              class="h-2 w-full"
+              style={`background-color: ${driver.teamColor}`}
+            />
+          )}
+
+          <!-- Card Content -->
+          <div class="p-6">
+            <!-- Position Badge -->
+            {driver.championshipPosition && (
+              <div class="flex justify-between items-start mb-4">
+                <span class="bg-red-600 text-white px-3 py-1 rounded-full text-sm font-bold">
+                  P{driver.championshipPosition}
+                </span>
+                <span class="text-3xl">{getNationalityFlag(driver.nationality)}</span>
+              </div>
+            )}
+
+            <!-- Driver Photo -->
+            {driver.headshotUrl ? (
+              <div class="flex justify-center mb-4">
+                <img
+                  src={driver.headshotUrl}
+                  alt={driver.driverName}
+                  class="w-24 h-24 rounded-full object-cover border-2 border-gray-700"
+                  onerror="this.style.display='none'"
+                />
+              </div>
+            ) : (
+              <div class="flex justify-center mb-4">
+                <div class="w-24 h-24 rounded-full bg-gray-800 border-2 border-gray-700 flex items-center justify-center">
+                  <span class="text-4xl">🏎️</span>
+                </div>
+              </div>
+            )}
+
+            <!-- Driver Name & Number -->
+            <div class="text-center mb-4">
+              <h3 class="text-xl font-bold text-white mb-1">{driver.driverName}</h3>
+              {driver.driverNumber && (
+                <p class="text-gray-400 text-sm">#{driver.driverNumber}</p>
+              )}
+              <p class="text-gray-500 text-sm mt-1">{driver.abbreviation}</p>
+            </div>
+
+            <!-- Team Info -->
+            <div class="flex items-center justify-center gap-2 mb-4 pb-4 border-b border-gray-800">
+              {driver.teamLogo && (
+                <img
+                  src={driver.teamLogo}
+                  alt={driver.teamName}
+                  class="h-8 object-contain"
+                  onerror="this.style.display='none'"
+                />
+              )}
+              <span class="text-gray-300 text-sm font-medium">{driver.teamName}</span>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-2 gap-3">
+              <!-- Points -->
+              <div class="bg-gray-800/50 rounded-lg p-3 text-center">
+                <div class="text-2xl font-bold text-white">{driver.stats.totalPoints}</div>
+                <div class="text-xs text-gray-400 mt-1">Points</div>
+              </div>
+
+              <!-- Wins -->
+              <div class="bg-gray-800/50 rounded-lg p-3 text-center">
+                <div class="text-2xl font-bold text-yellow-500">{driver.stats.wins}</div>
+                <div class="text-xs text-gray-400 mt-1">Wins</div>
+              </div>
+
+              <!-- Podiums -->
+              <div class="bg-gray-800/50 rounded-lg p-3 text-center">
+                <div class="text-2xl font-bold text-orange-500">{driver.stats.podiums}</div>
+                <div class="text-xs text-gray-400 mt-1">Podiums</div>
+              </div>
+
+              <!-- Poles -->
+              <div class="bg-gray-800/50 rounded-lg p-3 text-center">
+                <div class="text-2xl font-bold text-blue-500">{driver.stats.poles}</div>
+                <div class="text-xs text-gray-400 mt-1">Poles</div>
+              </div>
+            </div>
+
+            <!-- View Profile Link -->
+            <div class="mt-4 text-center">
+              <a
+                href={`/drivers/profile/${driver.driverId}`}
+                class="text-red-500 hover:text-red-400 text-sm font-medium transition-colors"
+              >
+                View Full Profile →
+              </a>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+    )}
+
+    <!-- No Results Message -->
+    <div id="noResults" class="hidden text-center py-16">
+      <span class="text-6xl mb-4 block">🔍</span>
+      <p class="text-gray-400 text-lg">No drivers found matching your search</p>
+    </div>
+  </div>
+</Layout>
+
+<script>
+  // Year selector
+  const yearSelector = document.getElementById('yearSelector') as HTMLSelectElement;
+  yearSelector?.addEventListener('change', (e) => {
+    const year = (e.target as HTMLSelectElement).value;
+    window.location.href = `/drivers/${year}`;
+  });
+
+  // Sort functionality
+  const sortButtons = document.querySelectorAll('.sort-btn');
+  const driversGrid = document.getElementById('driversGrid') as HTMLElement;
+  const cards = Array.from(document.querySelectorAll('.driver-card'));
+
+  sortButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      // Update active button
+      sortButtons.forEach(btn => btn.classList.remove('active', 'bg-red-600'));
+      button.classList.add('active', 'bg-red-600');
+
+      // Sort cards
+      const sortType = button.id.replace('sort', '').toLowerCase();
+      const sortedCards = [...cards].sort((a, b) => {
+        const aEl = a as HTMLElement;
+        const bEl = b as HTMLElement;
+
+        if (sortType === 'points') {
+          return parseInt(bEl.dataset.points || '0') - parseInt(aEl.dataset.points || '0');
+        } else if (sortType === 'name') {
+          return (aEl.dataset.driverName || '').localeCompare(bEl.dataset.driverName || '');
+        } else if (sortType === 'team') {
+          return (aEl.dataset.teamName || '').localeCompare(bEl.dataset.teamName || '');
+        }
+        return 0;
+      });
+
+      // Re-append cards in sorted order
+      sortedCards.forEach(card => driversGrid.appendChild(card));
+    });
+  });
+
+  // Search functionality
+  const searchInput = document.getElementById('searchInput') as HTMLInputElement;
+  const noResults = document.getElementById('noResults') as HTMLElement;
+
+  searchInput?.addEventListener('input', (e) => {
+    const searchTerm = (e.target as HTMLInputElement).value.toLowerCase();
+    let visibleCount = 0;
+
+    cards.forEach(card => {
+      const cardEl = card as HTMLElement;
+      const driverName = cardEl.dataset.driverName || '';
+      const teamName = cardEl.dataset.teamName || '';
+
+      if (driverName.includes(searchTerm) || teamName.includes(searchTerm)) {
+        cardEl.style.display = 'block';
+        visibleCount++;
+      } else {
+        cardEl.style.display = 'none';
+      }
+    });
+
+    // Show/hide no results message
+    if (visibleCount === 0) {
+      noResults.classList.remove('hidden');
+      driversGrid.style.display = 'none';
+    } else {
+      noResults.classList.add('hidden');
+      driversGrid.style.display = 'grid';
+    }
+  });
+</script>
+
+<style>
+  .sort-btn.active {
+    @apply bg-red-600 border-red-500;
+  }
+
+  .driver-card {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+  }
+
+  .driver-card:hover {
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+  }
+</style>

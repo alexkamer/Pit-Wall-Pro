@@ -256,6 +256,29 @@ export async function getDriverRaceResults(year: number) {
   return driverData;
 }
 
+// Search for drivers across all seasons
+export async function searchDrivers(query: string = '', limit: number = 50) {
+  const params = new URLSearchParams();
+  if (query) params.append('query', query);
+  params.append('limit', limit.toString());
+  return fetchAPI<any>(`/drivers?${params.toString()}`);
+}
+
+// Get drivers list for a specific season
+export async function getDriversBySeason(year: number, sort: string = 'points') {
+  return fetchAPI<any>(`/drivers/season/${year}?sort=${sort}`);
+}
+
+// Get individual driver profile with career stats
+export async function getDriverProfile(driverId: string) {
+  return fetchAPI<any>(`/drivers/profile/${driverId}`);
+}
+
+// Get detailed driver profile from backend
+export async function getDriverProfileDetailed(driverId: string) {
+  return fetchAPI<any>(`/drivers/profile/${driverId}`);
+}
+
 export async function getConstructorRaceResults(year: number) {
   const standings = await fetchAPI<any>(`/espn/standings/${year}?type=constructor`);
 

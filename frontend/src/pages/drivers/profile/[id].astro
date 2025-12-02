@@ -1,0 +1,281 @@
+---
+import Layout from '../../../layouts/Layout.astro';
+import { getDriverProfile } from '../../../lib/api';
+
+export const prerender = false;
+
+const { id } = Astro.params;
+
+if (!id) {
+  return Astro.redirect('/drivers');
+}
+
+let profileData: any = null;
+let error: string | null = null;
+
+try {
+  profileData = await getDriverProfile(id);
+} catch (e) {
+  error = e instanceof Error ? e.message : 'Failed to load driver profile';
+  console.error(`Error fetching driver profile for ${id}:`, e);
+}
+
+const driver = profileData?.driver;
+const seasons = profileData?.seasons || [];
+const recentRaces = profileData?.recentRaces || [];
+
+// Country to flag emoji mapping
+const getNationalityFlag = (nationality: string): string => {
+  if (!nationality) return '🏁';
+
+  const countryToCode: Record<string, string> = {
+    'Netherlands': 'NL', 'Britain': 'GB', 'Monaco': 'MC', 'Australia': 'AU',
+    'Spain': 'ES', 'Mexico': 'MX', 'Canada': 'CA', 'Germany': 'DE',
+    'France': 'FR', 'Finland': 'FI', 'Denmark': 'DK', 'China': 'CN',
+    'Japan': 'JP', 'Thailand': 'TH', 'USA': 'US', 'United States': 'US',
+    'Italy': 'IT', 'Austria': 'AT', 'Belgium': 'BE', 'Switzerland': 'CH',
+    'Brazil': 'BR', 'Argentina': 'AR', 'Colombia': 'CO', 'Venezuela': 'VE',
+    'Sweden': 'SE', 'Poland': 'PL', 'Russia': 'RU', 'New Zealand': 'NZ',
+    'South Africa': 'ZA', 'Portugal': 'PT', 'Ireland': 'IE', 'India': 'IN',
+    'Malaysia': 'MY',
+  };
+
+  const code = countryToCode[nationality];
+  if (!code) return '🏁';
+
+  return String.fromCodePoint(
+    ...code.split('').map(char => 127397 + char.charCodeAt(0))
+  );
+};
+
+const formatDate = (dateStr: string) => {
+  if (!dateStr) return 'Unknown';
+  const date = new Date(dateStr);
+  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+};
+
+const calculateAge = (birthDate: string) => {
+  if (!birthDate) return null;
+  const today = new Date();
+  const birth = new Date(birthDate);
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+    age--;
+  }
+  return age;
+};
+---
+
+<Layout title={driver ? `${driver.display_name} - F1 Driver Profile` : 'Driver Profile'}>
+  <div class="max-w-7xl mx-auto px-4 py-8">
+    {error && (
+      <div class="bg-red-900/50 border border-red-700 rounded-lg p-6 mb-8">
+        <h2 class="text-xl font-bold text-red-400 mb-2">Error Loading Profile</h2>
+        <p class="text-red-300">{error}</p>
+        <a href="/drivers" class="inline-block mt-4 text-red-400 hover:text-red-300">
+          ← Back to Drivers Search
+        </a>
+      </div>
+    )}
+
+    {driver && (
+      <div>
+        <!-- Back Button -->
+        <a
+          href="/drivers"
+          class="inline-flex items-center gap-2 text-gray-400 hover:text-white mb-6 transition-colors"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+          </svg>
+          Back to Drivers
+        </a>
+
+        <!-- Driver Header -->
+        <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-8 mb-8">
+          <div class="flex flex-col md:flex-row items-center md:items-start gap-8">
+            <!-- Driver Photo -->
+            <div class="flex-shrink-0">
+              {driver.headshot_url ? (
+                <img
+                  src={driver.headshot_url}
+                  alt={driver.display_name}
+                  class="w-48 h-48 rounded-full object-cover border-4 border-gray-700"
+                  onerror="this.style.display='none'"
+                />
+              ) : (
+                <div class="w-48 h-48 rounded-full bg-gray-800 border-4 border-gray-700 flex items-center justify-center">
+                  <span class="text-8xl">🏎️</span>
+                </div>
+              )}
+            </div>
+
+            <!-- Driver Info -->
+            <div class="flex-1 text-center md:text-left">
+              <div class="flex items-center gap-3 justify-center md:justify-start mb-4">
+                <h1 class="text-5xl font-bold text-white">{driver.display_name}</h1>
+                <span class="text-5xl">{getNationalityFlag(driver.nationality)}</span>
+                {driver.active && (
+                  <span class="bg-green-600 text-white text-sm px-3 py-1 rounded-full">
+                    Active
+                  </span>
+                )}
+              </div>
+
+              {driver.abbreviation && (
+                <p class="text-2xl text-gray-400 mb-6">{driver.abbreviation}</p>
+              )}
+
+              <!-- Basic Info Grid -->
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                {driver.nationality && (
+                  <div>
+                    <p class="text-sm text-gray-500">Nationality</p>
+                    <p class="text-lg text-white font-medium">{driver.nationality}</p>
+                  </div>
+                )}
+                {driver.date_of_birth && (
+                  <div>
+                    <p class="text-sm text-gray-500">Date of Birth</p>
+                    <p class="text-lg text-white font-medium">{formatDate(driver.date_of_birth)}</p>
+                    {calculateAge(driver.date_of_birth) && (
+                      <p class="text-sm text-gray-400">({calculateAge(driver.date_of_birth)} years old)</p>
+                    )}
+                  </div>
+                )}
+                {driver.birth_place && (
+                  <div>
+                    <p class="text-sm text-gray-500">Place of Birth</p>
+                    <p class="text-lg text-white font-medium">{driver.birth_place}</p>
+                  </div>
+                )}
+                {driver.number && (
+                  <div>
+                    <p class="text-sm text-gray-500">Racing Number</p>
+                    <p class="text-lg text-white font-medium">#{driver.number}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Career Statistics -->
+        <div class="mb-8">
+          <h2 class="text-3xl font-bold text-white mb-6">Career Statistics</h2>
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6 text-center">
+              <div class="text-4xl font-bold text-white mb-2">{driver.total_races || 0}</div>
+              <div class="text-sm text-gray-400">Races</div>
+            </div>
+            <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6 text-center">
+              <div class="text-4xl font-bold text-yellow-500 mb-2">{driver.wins || 0}</div>
+              <div class="text-sm text-gray-400">Wins</div>
+            </div>
+            <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6 text-center">
+              <div class="text-4xl font-bold text-orange-500 mb-2">{driver.podiums || 0}</div>
+              <div class="text-sm text-gray-400">Podiums</div>
+            </div>
+            <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6 text-center">
+              <div class="text-4xl font-bold text-blue-500 mb-2">{driver.poles || 0}</div>
+              <div class="text-sm text-gray-400">Pole Positions</div>
+            </div>
+            <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6 text-center">
+              <div class="text-4xl font-bold text-purple-500 mb-2">{driver.fastest_laps || 0}</div>
+              <div class="text-sm text-gray-400">Fastest Laps</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Season by Season -->
+        {seasons.length > 0 && (
+          <div class="mb-8">
+            <h2 class="text-3xl font-bold text-white mb-6">Season by Season</h2>
+            <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
+              <div class="overflow-x-auto">
+                <table class="w-full">
+                  <thead class="bg-gray-800">
+                    <tr>
+                      <th class="px-6 py-4 text-left text-sm font-semibold text-gray-300">Year</th>
+                      <th class="px-6 py-4 text-left text-sm font-semibold text-gray-300">Team</th>
+                      <th class="px-6 py-4 text-center text-sm font-semibold text-gray-300">Races</th>
+                      <th class="px-6 py-4 text-center text-sm font-semibold text-gray-300">Wins</th>
+                      <th class="px-6 py-4 text-center text-sm font-semibold text-gray-300">Podiums</th>
+                      <th class="px-6 py-4 text-center text-sm font-semibold text-gray-300">Poles</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-800">
+                    {seasons.map((season: any) => (
+                      <tr class="hover:bg-gray-800/50 transition-colors">
+                        <td class="px-6 py-4 text-white font-medium">{season.year}</td>
+                        <td class="px-6 py-4">
+                          <div class="flex items-center gap-2">
+                            {season.team_logo && (
+                              <img
+                                src={season.team_logo}
+                                alt={season.team_name}
+                                class="h-6 object-contain"
+                                onerror="this.style.display='none'"
+                              />
+                            )}
+                            <span class="text-gray-300">{season.team_name || 'Unknown'}</span>
+                          </div>
+                        </td>
+                        <td class="px-6 py-4 text-center text-gray-300">{season.races}</td>
+                        <td class="px-6 py-4 text-center text-yellow-500 font-semibold">{season.wins}</td>
+                        <td class="px-6 py-4 text-center text-orange-500 font-semibold">{season.podiums}</td>
+                        <td class="px-6 py-4 text-center text-blue-500 font-semibold">{season.poles}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <!-- Recent Races -->
+        {recentRaces.length > 0 && (
+          <div>
+            <h2 class="text-3xl font-bold text-white mb-6">Recent Races</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {recentRaces.map((race: any) => (
+                <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-6 hover:border-gray-700 transition-colors">
+                  <div class="flex justify-between items-start mb-3">
+                    <div>
+                      <h3 class="text-lg font-bold text-white">{race.event_name}</h3>
+                      <p class="text-sm text-gray-400">{race.year} • Round {race.round_number}</p>
+                    </div>
+                    <div class={`text-3xl font-bold ${
+                      race.position === 1 ? 'text-yellow-500' :
+                      race.position <= 3 ? 'text-orange-500' :
+                      race.position <= 10 ? 'text-white' : 'text-gray-500'
+                    }`}>
+                      P{race.position}
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-between text-sm">
+                    <span class="text-gray-400">{race.team_name}</span>
+                    {race.fastest_lap === 1 && (
+                      <span class="bg-purple-600 text-white text-xs px-2 py-1 rounded-full">
+                        Fastest Lap
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+</Layout>
+
+<style>
+  table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+</style>

@@ -345,6 +345,386 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
             logger.error(f"Error comparing drivers: {e}")
             raise HTTPException(500, str(e))
 
+    @app.get("/drivers")
+    def search_drivers(query: Optional[str] = None, limit: int = 50):
+        """Search for drivers across all seasons.
+
+        Args:
+            query: Optional search query (searches name, abbreviation)
+            limit: Maximum number of results (default: 50)
+
+        Returns:
+            List of drivers matching the search
+        """
+        import sqlite3
+
+        try:
+            # Connect to database
+            import os
+            db_path = os.path.join(os.path.dirname(__file__), '../../../f1_data.db')
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Build search query
+            if query:
+                search_pattern = f"%{query}%"
+                cursor.execute("""
+                    SELECT DISTINCT
+                        d.id as driver_id,
+                        d.abbreviation,
+                        d.display_name as driver_name,
+                        d.first_name,
+                        d.last_name,
+                        d.nationality,
+                        d.number as driver_number,
+                        d.headshot_url,
+                        d.flag_url,
+                        d.active,
+                        COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' THEN sr.session_espn_competition_id END) as total_races
+                    FROM drivers d
+                    LEFT JOIN session_results sr ON d.id = sr.driver_id
+                    LEFT JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                    WHERE d.display_name LIKE ? OR d.abbreviation LIKE ?
+                    GROUP BY d.id
+                    ORDER BY d.active DESC, d.display_name
+                    LIMIT ?
+                """, (search_pattern, search_pattern, limit))
+            else:
+                # Return most recent/active drivers
+                cursor.execute("""
+                    SELECT DISTINCT
+                        d.id as driver_id,
+                        d.abbreviation,
+                        d.display_name as driver_name,
+                        d.first_name,
+                        d.last_name,
+                        d.nationality,
+                        d.number as driver_number,
+                        d.headshot_url,
+                        d.flag_url,
+                        d.active,
+                        COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' THEN sr.session_espn_competition_id END) as total_races
+                    FROM drivers d
+                    LEFT JOIN session_results sr ON d.id = sr.driver_id
+                    LEFT JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                    GROUP BY d.id
+                    ORDER BY d.active DESC, d.display_name
+                    LIMIT ?
+                """, (limit,))
+
+            drivers_list = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+
+            return json_safe({
+                'total': len(drivers_list),
+                'drivers': drivers_list
+            })
+
+        except Exception as e:
+            logger.error(f"Error searching drivers: {e}")
+            raise HTTPException(500, str(e))
+
+    @app.get("/drivers/profile/{driver_id}")
+    def get_driver_profile(driver_id: str):
+        """Get detailed driver profile with career statistics.
+
+        Args:
+            driver_id: ESPN driver ID
+
+        Returns:
+            Driver profile with career stats
+        """
+        import sqlite3
+
+        try:
+            # Connect to database
+            import os
+            db_path = os.path.join(os.path.dirname(__file__), '../../../f1_data.db')
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Get driver basic info
+            cursor.execute("""
+                SELECT
+                    d.*,
+                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' THEN sr.session_espn_competition_id END) as total_races,
+                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' AND sr.position = 1 THEN sr.session_espn_competition_id END) as wins,
+                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' AND sr.position <= 3 THEN sr.session_espn_competition_id END) as podiums,
+                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Qualifying' AND sr.position = 1 THEN sr.session_espn_competition_id END) as poles,
+                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' AND sr.fastest_lap = 1 THEN sr.session_espn_competition_id END) as fastest_laps
+                FROM drivers d
+                LEFT JOIN session_results sr ON d.id = sr.driver_id
+                LEFT JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                WHERE d.id = ?
+                GROUP BY d.id
+            """, (driver_id,))
+
+            driver_row = cursor.fetchone()
+            if not driver_row:
+                raise HTTPException(404, f"Driver {driver_id} not found")
+
+            driver = dict(driver_row)
+
+            # Get season-by-season statistics
+            cursor.execute("""
+                SELECT
+                    r.year,
+                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' THEN sr.session_espn_competition_id END) as races,
+                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' AND sr.position = 1 THEN sr.session_espn_competition_id END) as wins,
+                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Race' AND sr.position <= 3 THEN sr.session_espn_competition_id END) as podiums,
+                    COUNT(DISTINCT CASE WHEN rs.session_type = 'Qualifying' AND sr.position = 1 THEN sr.session_espn_competition_id END) as poles,
+                    t.display_name as team_name,
+                    t.logo_url as team_logo
+                FROM session_results sr
+                JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                LEFT JOIN teams t ON sr.team_id = t.id
+                WHERE sr.driver_id = ? AND rs.session_type IN ('Race', 'Qualifying')
+                GROUP BY r.year, t.id
+                ORDER BY r.year DESC
+            """, (driver_id,))
+
+            seasons = [dict(row) for row in cursor.fetchall()]
+
+            # Get recent race results (last 10 races)
+            cursor.execute("""
+                SELECT
+                    r.year,
+                    r.round_number,
+                    r.event_name,
+                    r.country,
+                    rs.session_type,
+                    sr.position,
+                    sr.fastest_lap,
+                    t.display_name as team_name
+                FROM session_results sr
+                JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                LEFT JOIN teams t ON sr.team_id = t.id
+                WHERE sr.driver_id = ? AND rs.session_type = 'Race'
+                ORDER BY r.year DESC, r.round_number DESC
+                LIMIT 10
+            """, (driver_id,))
+
+            recent_races = [dict(row) for row in cursor.fetchall()]
+
+            conn.close()
+
+            return json_safe({
+                'driver': driver,
+                'seasons': seasons,
+                'recentRaces': recent_races
+            })
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting driver profile: {e}")
+            raise HTTPException(500, str(e))
+
+    @app.get("/drivers/season/{year}")
+    def get_drivers_by_season(year: int, sort: Optional[str] = "points"):
+        """Get all drivers for a specific season with their stats.
+
+        Args:
+            year: Season year
+            sort: Sort by 'points', 'name', 'team', or 'nationality' (default: 'points')
+
+        Returns:
+            List of drivers with stats for that season
+        """
+        import sqlite3
+
+        try:
+            # Connect to database
+            import os
+            db_path = os.path.join(os.path.dirname(__file__), '../../../f1_data.db')
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Get drivers who participated in the season with stats
+            cursor.execute("""
+                WITH driver_stats AS (
+                    SELECT
+                        d.id as driver_id,
+                        d.abbreviation,
+                        d.display_name as driver_name,
+                        d.first_name,
+                        d.last_name,
+                        d.nationality,
+                        d.number as driver_number,
+                        d.headshot_url,
+                        d.flag_url,
+                        t.id as team_id,
+                        t.display_name as team_name,
+                        t.logo_url as team_logo,
+                        t.color as team_color,
+                        r.round_number,
+                        rs.session_type,
+                        sr.position,
+                        sr.fastest_lap,
+                        ROW_NUMBER() OVER (PARTITION BY d.id ORDER BY r.round_number DESC) as rn
+                    FROM session_results sr
+                    JOIN drivers d ON sr.driver_id = d.id
+                    JOIN teams t ON sr.team_id = t.id
+                    JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                    JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                    WHERE r.year = ? AND rs.session_type IN ('Race', 'Sprint Race')
+                ),
+                driver_latest_team AS (
+                    SELECT
+                        driver_id, abbreviation, driver_name, first_name, last_name,
+                        nationality, driver_number, headshot_url, flag_url,
+                        team_id, team_name, team_logo, team_color
+                    FROM driver_stats
+                    WHERE rn = 1
+                )
+                SELECT * FROM driver_latest_team
+                ORDER BY driver_name
+            """, (year,))
+
+            drivers_data = [dict(row) for row in cursor.fetchall()]
+
+            # Get points system for the year
+            def get_points_system(year: int) -> dict:
+                if year >= 2010:
+                    return {1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1}
+                elif year >= 2003:
+                    return {1: 10, 2: 8, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1}
+                elif year >= 1991:
+                    return {1: 10, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                elif year >= 1961:
+                    return {1: 9, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                elif year == 1960:
+                    return {1: 8, 2: 6, 3: 4, 4: 3, 5: 2, 6: 1}
+                else:
+                    return {1: 8, 2: 6, 3: 4, 4: 3, 5: 2}
+
+            def get_sprint_points_system(year: int) -> dict:
+                if year >= 2021:
+                    return {1: 8, 2: 7, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1}
+                return {}
+
+            def has_fastest_lap_point(year: int) -> bool:
+                return year <= 1959 or year >= 2019
+
+            points_system = get_points_system(year)
+            sprint_points_system = get_sprint_points_system(year)
+            fastest_lap_enabled = has_fastest_lap_point(year)
+
+            # Calculate stats for each driver
+            drivers_list = []
+            for driver_data in drivers_data:
+                driver_id = driver_data['driver_id']
+
+                # Get race results for this driver
+                cursor.execute("""
+                    SELECT
+                        rs.session_type,
+                        sr.position,
+                        sr.fastest_lap,
+                        r.round_number
+                    FROM session_results sr
+                    JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                    JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                    WHERE sr.driver_id = ? AND r.year = ? AND rs.session_type IN ('Race', 'Sprint Race')
+                """, (driver_id, year))
+
+                results = cursor.fetchall()
+
+                # Calculate statistics
+                total_points = 0
+                wins = 0
+                podiums = 0
+                poles = 0
+                races_entered = 0
+
+                for result in results:
+                    session_type = result['session_type']
+                    position = result['position']
+
+                    if session_type == 'Race':
+                        races_entered += 1
+                        race_points = points_system.get(position, 0)
+
+                        if fastest_lap_enabled and result['fastest_lap'] and position:
+                            if year <= 1959 or position <= 10:
+                                race_points += 1
+
+                        total_points += race_points
+
+                        if position == 1:
+                            wins += 1
+                        if position <= 3:
+                            podiums += 1
+
+                    elif session_type == 'Sprint Race':
+                        sprint_points = sprint_points_system.get(position, 0)
+                        total_points += sprint_points
+
+                # Get pole positions
+                cursor.execute("""
+                    SELECT COUNT(*) as pole_count
+                    FROM session_results sr
+                    JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                    JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                    WHERE sr.driver_id = ? AND r.year = ?
+                    AND rs.session_type = 'Qualifying' AND sr.position = 1
+                """, (driver_id, year))
+
+                poles = cursor.fetchone()['pole_count']
+
+                drivers_list.append({
+                    'driverId': driver_id,
+                    'abbreviation': driver_data['abbreviation'],
+                    'driverName': driver_data['driver_name'],
+                    'firstName': driver_data['first_name'],
+                    'lastName': driver_data['last_name'],
+                    'nationality': driver_data['nationality'],
+                    'driverNumber': driver_data['driver_number'],
+                    'headshotUrl': driver_data['headshot_url'],
+                    'flagUrl': driver_data['flag_url'],
+                    'teamName': driver_data['team_name'],
+                    'teamLogo': driver_data['team_logo'],
+                    'teamColor': driver_data['team_color'],
+                    'stats': {
+                        'totalPoints': total_points,
+                        'wins': wins,
+                        'podiums': podiums,
+                        'poles': poles,
+                        'racesEntered': races_entered
+                    }
+                })
+
+            # Sort based on parameter
+            if sort == "points":
+                drivers_list.sort(key=lambda x: x['stats']['totalPoints'], reverse=True)
+            elif sort == "name":
+                drivers_list.sort(key=lambda x: x['driverName'])
+            elif sort == "team":
+                drivers_list.sort(key=lambda x: x['teamName'])
+            elif sort == "nationality":
+                drivers_list.sort(key=lambda x: x['nationality'])
+
+            # Add championship position after sorting by points
+            if sort == "points":
+                for i, driver in enumerate(drivers_list, 1):
+                    driver['championshipPosition'] = i
+
+            conn.close()
+
+            return json_safe({
+                'year': year,
+                'drivers': drivers_list
+            })
+
+        except Exception as e:
+            logger.error(f"Error getting drivers for season {year}: {e}")
+            raise HTTPException(500, str(e))
+
     @app.get("/standings/complete/{year}")
     def get_complete_standings(year: int):
         """Get complete standings data directly from database in one call.

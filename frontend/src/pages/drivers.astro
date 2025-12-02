@@ -1,0 +1,183 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="F1 Drivers Search">
+  <div class="max-w-4xl mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="mb-8">
+      <h1 class="text-4xl font-bold text-white mb-2">F1 Drivers</h1>
+      <p class="text-gray-400">Search for any Formula 1 driver across all seasons</p>
+    </div>
+
+    <!-- Search Bar with Dropdown -->
+    <div class="mb-8">
+      <div class="relative">
+        <input
+          type="text"
+          id="searchInput"
+          placeholder="Search by name or abbreviation (e.g. 'Verstappen' or 'VER')..."
+          class="w-full px-6 py-4 bg-gray-900 border-2 border-gray-800 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 focus:outline-none text-lg"
+          autocomplete="off"
+        />
+        <div class="absolute right-4 top-4 text-gray-500">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
+
+        <!-- Dropdown Results -->
+        <div id="dropdownResults" class="hidden absolute z-10 w-full mt-2 bg-gray-900 border-2 border-gray-800 rounded-lg shadow-xl max-h-96 overflow-y-auto">
+          <!-- Results will be populated here -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loadingState" class="hidden text-center py-12">
+      <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-red-500"></div>
+      <p class="text-gray-400 mt-4">Searching...</p>
+    </div>
+
+    <!-- Empty State -->
+    <div id="emptyState" class="text-center py-16">
+      <span class="text-6xl mb-4 block">🏎️</span>
+      <p class="text-gray-400 text-lg mb-2">Start typing to search for drivers</p>
+      <p class="text-gray-500 text-sm">Search by name or abbreviation (e.g. "Hamilton" or "HAM")</p>
+    </div>
+
+    <!-- No Results Message -->
+    <div id="noResults" class="hidden text-center py-16">
+      <span class="text-6xl mb-4 block">🔍</span>
+      <p class="text-gray-400 text-lg mb-2">No drivers found</p>
+      <p class="text-gray-500 text-sm">Try a different search term</p>
+    </div>
+  </div>
+</Layout>
+
+<script>
+  const searchInput = document.getElementById('searchInput') as HTMLInputElement;
+  const dropdownResults = document.getElementById('dropdownResults') as HTMLElement;
+  const loadingState = document.getElementById('loadingState') as HTMLElement;
+  const emptyState = document.getElementById('emptyState') as HTMLElement;
+  const noResults = document.getElementById('noResults') as HTMLElement;
+
+  let searchTimeout: number;
+  let currentDrivers: any[] = [];
+
+  // Function to render dropdown results
+  function renderDropdown(drivers: any[]) {
+    if (drivers.length === 0) {
+      dropdownResults.classList.add('hidden');
+      emptyState.classList.add('hidden');
+      noResults.classList.remove('hidden');
+      return;
+    }
+
+    dropdownResults.innerHTML = drivers.map(driver => `
+      <a
+        href="/drivers/profile/${driver.driver_id}"
+        class="flex items-center gap-4 p-4 hover:bg-gray-800 transition-colors border-b border-gray-800 last:border-b-0"
+      >
+        ${driver.headshot_url
+          ? `<img src="${driver.headshot_url}" alt="${driver.driver_name}" class="w-16 h-16 rounded-full object-cover border-2 border-gray-700" onerror="this.style.display='none'"/>`
+          : `<div class="w-16 h-16 rounded-full bg-gray-800 border-2 border-gray-700 flex items-center justify-center"><span class="text-2xl">🏎️</span></div>`
+        }
+        <div class="flex-1">
+          <h3 class="text-lg font-bold text-white">${driver.driver_name}</h3>
+          <div class="flex items-center gap-3 text-sm text-gray-400 mt-1">
+            ${driver.abbreviation ? `<span class="text-gray-500">${driver.abbreviation}</span>` : ''}
+            ${driver.nationality ? `<span>• ${driver.nationality}</span>` : ''}
+            ${driver.total_races > 0 ? `<span>• ${driver.total_races} races</span>` : ''}
+            ${driver.active ? `<span class="bg-green-600 text-white text-xs px-2 py-0.5 rounded-full ml-2">Active</span>` : ''}
+          </div>
+        </div>
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+        </svg>
+      </a>
+    `).join('');
+
+    dropdownResults.classList.remove('hidden');
+    emptyState.classList.add('hidden');
+    noResults.classList.add('hidden');
+  }
+
+  // Debounced search function
+  async function searchDrivers(query: string) {
+    if (!query || query.trim().length === 0) {
+      dropdownResults.classList.add('hidden');
+      emptyState.classList.remove('hidden');
+      noResults.classList.add('hidden');
+      loadingState.classList.add('hidden');
+      return;
+    }
+
+    loadingState.classList.remove('hidden');
+    emptyState.classList.add('hidden');
+
+    try {
+      const response = await fetch(`http://localhost:8000/drivers?query=${encodeURIComponent(query)}&limit=10`);
+      const data = await response.json();
+      currentDrivers = data.drivers || [];
+      renderDropdown(currentDrivers);
+    } catch (error) {
+      console.error('Error searching drivers:', error);
+      dropdownResults.innerHTML = `
+        <div class="p-4 text-center text-red-400">
+          <p>Error loading drivers. Please try again.</p>
+        </div>
+      `;
+      dropdownResults.classList.remove('hidden');
+    } finally {
+      loadingState.classList.add('hidden');
+    }
+  }
+
+  // Search on input with debounce
+  searchInput?.addEventListener('input', (e) => {
+    const query = (e.target as HTMLInputElement).value;
+
+    clearTimeout(searchTimeout);
+    searchTimeout = window.setTimeout(() => {
+      searchDrivers(query);
+    }, 300);
+  });
+
+  // Focus search on page load
+  searchInput?.focus();
+
+  // Search on "/" key press
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '/' && document.activeElement !== searchInput) {
+      e.preventDefault();
+      searchInput?.focus();
+    }
+  });
+
+  // Close dropdown when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!searchInput?.contains(e.target as Node) && !dropdownResults?.contains(e.target as Node)) {
+      dropdownResults?.classList.add('hidden');
+    }
+  });
+</script>
+
+<style>
+  #dropdownResults::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  #dropdownResults::-webkit-scrollbar-track {
+    background: #1f2937;
+  }
+
+  #dropdownResults::-webkit-scrollbar-thumb {
+    background: #4b5563;
+    border-radius: 4px;
+  }
+
+  #dropdownResults::-webkit-scrollbar-thumb:hover {
+    background: #6b7280;
+  }
+</style>
