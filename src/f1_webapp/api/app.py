@@ -220,6 +220,7 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
             cursor.execute("""
                 SELECT
                     r.round_number,
+                    d.id as driver_id,
                     d.abbreviation,
                     sr.position
                 FROM races r
@@ -230,13 +231,16 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                 ORDER BY r.round_number, sr.position
             """, (year,))
 
-            # Build podium map
+            # Build podium map with driver IDs and abbreviations
             podium_map = {}
             for row in cursor.fetchall():
                 round_num = row['round_number']
                 if round_num not in podium_map:
                     podium_map[round_num] = []
-                podium_map[round_num].append(row['abbreviation'])
+                podium_map[round_num].append({
+                    'id': row['driver_id'],
+                    'abbreviation': row['abbreviation']
+                })
 
             # Get year-appropriate points system for calculating winning constructor
             def get_points_for_position(position: int, year: int) -> int:
