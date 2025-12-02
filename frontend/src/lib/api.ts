@@ -386,3 +386,23 @@ export async function getConstructorRaceResults(year: number) {
 
   return constructorData;
 }
+
+// Get qualifying results (Q1, Q2, Q3)
+export async function getQualifyingResults(year: number, roundNumber: number) {
+  return fetchAPI(`/fastf1/qualifying/${year}/${roundNumber}`);
+}
+
+// Get practice session results (FP1, FP2, FP3)
+export async function getPracticeResults(year: number, roundNumber: number) {
+  return fetchAPI(`/fastf1/practice/${year}/${roundNumber}`);
+}
+
+// Get sprint race results
+export async function getSprintResults(year: number, roundNumber: number) {
+  return fetchAPI(`/fastf1/sprint/${year}/${roundNumber}`);
+}
+
+// Get advanced session data (weather, track status, messages, lap times)
+export async function getSessionData(year: number, roundNumber: number, sessionType: string) {
+  return fetchAPI(`/fastf1/session-data/${year}/${roundNumber}/${sessionType}`);
+}

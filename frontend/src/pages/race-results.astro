@@ -1,11 +1,12 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { getRaceResults } from '../lib/api';
+import { getRaceResults, getQualifyingResults, getPracticeResults, getSprintResults, getSessionData } from '../lib/api';
 
-// Get the year and round from URL params
+// Get the year, round, and session from URL params
 const url = new URL(Astro.request.url);
 const yearParam = url.searchParams.get('year');
 const roundParam = url.searchParams.get('round');
+const session = url.searchParams.get('session') || 'race';
 
 if (!yearParam || !roundParam) {
   return Astro.redirect('/schedule');
@@ -14,8 +15,53 @@ if (!yearParam || !roundParam) {
 const year = parseInt(yearParam);
 const round = parseInt(roundParam);
 
-const data = await getRaceResults(year, round);
-const { race, results } = data;
+// Trigger background loading of FastF1 data (fire and forget)
+fetch(`http://localhost:8000/fastf1/preload/${year}/${round}`, { method: 'POST' }).catch(() => {});
+
+// Fetch race metadata (always needed for page title)
+const raceData = await getRaceResults(year, round);
+const { race, results } = raceData;
+
+// Fetch session-specific data
+let qualifyingData: any = null;
+let practiceData: any = null;
+let sprintData: any = null;
+let sessionData: any = null;
+
+if (session === 'qualifying') {
+  try {
+    qualifyingData = await getQualifyingResults(year, round);
+  } catch (e) {
+    console.error('Error fetching qualifying data:', e);
+  }
+} else if (session === 'practice') {
+  try {
+    practiceData = await getPracticeResults(year, round);
+  } catch (e) {
+    console.error('Error fetching practice data:', e);
+  }
+} else if (session === 'sprint') {
+  try {
+    sprintData = await getSprintResults(year, round);
+  } catch (e) {
+    console.error('Error fetching sprint data:', e);
+  }
+} else if (session === 'data') {
+  try {
+    sessionData = await getSessionData(year, round, 'R');
+  } catch (e) {
+    console.error('Error fetching session data:', e);
+  }
+}
+
+// Define available tabs
+const tabs = [
+  { id: 'race', label: 'Race', icon: '🏁' },
+  { id: 'qualifying', label: 'Qualifying', icon: '⏱️' },
+  { id: 'sprint', label: 'Sprint', icon: '⚡' },
+  { id: 'practice', label: 'Practice', icon: '🔧' },
+  { id: 'data', label: 'Data', icon: '📊' },
+];
 ---
 
 <Layout title={`${race.eventName} ${year} Results`}>
@@ -29,6 +75,31 @@ const { race, results } = data;
       <p class="text-gray-500">Round {race.roundNumber} of {year}</p>
     </div>
 
+    <!-- Tab Navigation -->
+    <div class="mb-6 border-b border-gray-800">
+      <nav class="flex gap-2 -mb-px overflow-x-auto">
+        {tabs.map((tab) => {
+          const isActive = session === tab.id;
+          const baseClasses = "flex items-center gap-2 px-6 py-3 border-b-2 font-medium transition-colors whitespace-nowrap";
+          const activeClasses = isActive
+            ? "border-red-500 text-red-500"
+            : "border-transparent text-gray-400 hover:text-gray-300 hover:border-gray-700";
+
+          return (
+            <a
+              href={`/race-results?year=${year}&round=${round}&session=${tab.id}`}
+              class={`${baseClasses} ${activeClasses}`}
+            >
+              <span>{tab.icon}</span>
+              <span>{tab.label}</span>
+            </a>
+          );
+        })}
+      </nav>
+    </div>
+
+    <!-- Race Results Tab -->
+    {session === 'race' && (
     <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
       <table class="w-full">
         <thead class="bg-gray-800/50 border-b border-gray-700">
@@ -48,7 +119,13 @@ const { race, results } = data;
             else if (result.position === 2) positionColor = 'text-gray-300';
             else if (result.position === 3) positionColor = 'text-orange-400';
 
-            const statusColor = result.status === 'Finished' ? 'text-green-400' : 'text-red-400';
+            // Determine actual status - if laps_completed is null, undefined, or status is explicitly DNF/Retired, mark as DNF
+            // Also treat any non-"Finished" status as DNF
+            let actualStatus = result.status || 'DNF';
+            if (result.status === 'Finished' && (result.laps_completed === null || result.laps_completed === undefined)) {
+              actualStatus = 'DNF';
+            }
+            const statusColor = actualStatus === 'Finished' ? 'text-green-400' : 'text-red-400';
 
             // Calculate position change (grid position - final position)
             // Positive means they moved up, negative means they moved down
@@ -117,8 +194,8 @@ const { race, results } = data;
                   {result.points !== null && result.points !== undefined ? result.points : '-'}
                 </td>
                 <td class="px-6 py-4">
-                  <span class={result.status ? statusColor : 'text-gray-500'}>
-                    {result.status || (result.position ? 'Finished' : '-')}
+                  <span class={statusColor}>
+                    {actualStatus}
                   </span>
                 </td>
               </tr>
@@ -127,8 +204,302 @@ const { race, results } = data;
         </tbody>
       </table>
     </div>
+    )}
 
-    {results.length === 0 && (
+    <!-- Qualifying Tab -->
+    {session === 'qualifying' && qualifyingData && (() => {
+      // Build combined results in correct qualifying order
+      const combinedResults: any[] = [];
+
+      // Add Q3 drivers (positions 1-10) - already sorted by Q3 time
+      if (qualifyingData.q3) {
+        qualifyingData.q3.forEach((q3Result: any) => {
+          const q2Result = qualifyingData.q2?.find((r: any) => r.driver === q3Result.driver);
+          const q1Result = qualifyingData.q1?.find((r: any) => r.driver === q3Result.driver);
+          combinedResults.push({
+            driver: q3Result.driver,
+            driver_number: q3Result.driver_number,
+            team: q3Result.team,
+            q1_time: q1Result?.lap_time || '-',
+            q2_time: q2Result?.lap_time || '-',
+            q3_time: q3Result.lap_time || '-'
+          });
+        });
+      }
+
+      // Add Q2 drivers who didn't make Q3 (positions 11-15)
+      if (qualifyingData.q2) {
+        const q3Drivers = new Set(qualifyingData.q3?.map((r: any) => r.driver) || []);
+        qualifyingData.q2.filter((q2Result: any) => !q3Drivers.has(q2Result.driver)).forEach((q2Result: any) => {
+          const q1Result = qualifyingData.q1?.find((r: any) => r.driver === q2Result.driver);
+          combinedResults.push({
+            driver: q2Result.driver,
+            driver_number: q2Result.driver_number,
+            team: q2Result.team,
+            q1_time: q1Result?.lap_time || '-',
+            q2_time: q2Result.lap_time || '-',
+            q3_time: '-'
+          });
+        });
+      }
+
+      // Add Q1 drivers who didn't make Q2 (positions 16-20)
+      if (qualifyingData.q1) {
+        const q2Drivers = new Set(qualifyingData.q2?.map((r: any) => r.driver) || []);
+        qualifyingData.q1.filter((q1Result: any) => !q2Drivers.has(q1Result.driver)).forEach((q1Result: any) => {
+          combinedResults.push({
+            driver: q1Result.driver,
+            driver_number: q1Result.driver_number,
+            team: q1Result.team,
+            q1_time: q1Result.lap_time || '-',
+            q2_time: '-',
+            q3_time: '-'
+          });
+        });
+      }
+
+      return (
+        <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
+          <table class="w-full">
+            <thead class="bg-gray-800/50 border-b border-gray-700">
+              <tr>
+                <th class="px-4 py-4 text-left text-xs font-medium text-gray-400 uppercase">Pos</th>
+                <th class="px-4 py-4 text-left text-xs font-medium text-gray-400 uppercase">Driver</th>
+                <th class="px-4 py-4 text-left text-xs font-medium text-gray-400 uppercase">Team</th>
+                <th class="px-4 py-4 text-left text-xs font-medium text-blue-500 uppercase">Q1</th>
+                <th class="px-4 py-4 text-left text-xs font-medium text-orange-500 uppercase">Q2</th>
+                <th class="px-4 py-4 text-left text-xs font-medium text-red-500 uppercase">Q3</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-800">
+              {combinedResults.map((result: any, index: number) => (
+                <tr class="hover:bg-gray-800/50">
+                  <td class="px-4 py-4 font-bold text-yellow-400">{index + 1}</td>
+                  <td class="px-4 py-4">
+                    <div class="flex items-center gap-2">
+                      <span class="px-2 py-1 rounded font-bold text-xs text-white bg-gray-700">
+                        #{result.driver_number}
+                      </span>
+                      <span>{result.driver}</span>
+                    </div>
+                  </td>
+                  <td class="px-4 py-4 text-gray-400 text-sm">{result.team}</td>
+                  <td class="px-4 py-4 font-mono text-green-400">{result.q1_time}</td>
+                  <td class="px-4 py-4 font-mono text-green-400">{result.q2_time}</td>
+                  <td class="px-4 py-4 font-mono text-green-400">{result.q3_time}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    })()}
+
+    {session === 'qualifying' && !qualifyingData && (
+      <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-8">
+        <div class="text-center py-12">
+          <p class="text-gray-400 text-lg mb-4">⏱️ Qualifying Results</p>
+          <p class="text-gray-500">No qualifying data available for this event</p>
+        </div>
+      </div>
+    )}
+
+    <!-- Sprint Tab -->
+    {session === 'sprint' && sprintData && sprintData.results && sprintData.results.length > 0 && (
+      <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
+        <table class="w-full">
+          <thead class="bg-gray-800/50 border-b border-gray-700">
+            <tr>
+              <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Pos</th>
+              <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Driver</th>
+              <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Team</th>
+              <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Grid</th>
+              <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Points</th>
+              <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Status</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800">
+            {sprintData.results.map((result: any) => (
+              <tr class="hover:bg-gray-800/50">
+                <td class="px-6 py-4 font-bold text-yellow-400">{result.position || '-'}</td>
+                <td class="px-6 py-4">
+                  <div class="flex items-center gap-2">
+                    <span class="px-2 py-1 rounded font-bold text-xs text-white bg-gray-700">
+                      #{result.driver_number}
+                    </span>
+                    <span>{result.driver}</span>
+                  </div>
+                </td>
+                <td class="px-6 py-4 text-gray-400">{result.team}</td>
+                <td class="px-6 py-4 text-gray-400">{result.grid_position || '-'}</td>
+                <td class="px-6 py-4 text-gray-400">{result.points || 0}</td>
+                <td class="px-6 py-4 text-green-400">{result.status || '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+
+    {session === 'sprint' && (!sprintData || !sprintData.results || sprintData.results.length === 0) && (
+      <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-8">
+        <div class="text-center py-12">
+          <p class="text-gray-400 text-lg mb-4">⚡ Sprint Results</p>
+          <p class="text-gray-500">{sprintData?.message || 'No sprint race for this event'}</p>
+        </div>
+      </div>
+    )}
+
+    <!-- Practice Tab -->
+    {session === 'practice' && practiceData && (
+      <div class="space-y-6">
+        {['fp3', 'fp2', 'fp1'].map((fp) => {
+          const sessionResults = practiceData[fp];
+          const sessionLabel = fp.toUpperCase();
+          return sessionResults && sessionResults.length > 0 && (
+            <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
+              <div class="bg-gray-800/50 px-6 py-3 border-b border-gray-700">
+                <h3 class="text-lg font-bold text-blue-500">{sessionLabel}</h3>
+              </div>
+              <table class="w-full">
+                <thead class="bg-gray-800/30 border-b border-gray-700">
+                  <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Pos</th>
+                    <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Driver</th>
+                    <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Team</th>
+                    <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Best Time</th>
+                    <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Laps</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-800">
+                  {sessionResults.map((result: any, index: number) => (
+                    <tr class="hover:bg-gray-800/50">
+                      <td class="px-6 py-4 font-bold">{index + 1}</td>
+                      <td class="px-6 py-4">
+                        <div class="flex items-center gap-2">
+                          <span class="px-2 py-1 rounded font-bold text-xs text-white bg-gray-700">
+                            #{result.driver_number}
+                          </span>
+                          <span>{result.driver}</span>
+                        </div>
+                      </td>
+                      <td class="px-6 py-4 text-gray-400">{result.team}</td>
+                      <td class="px-6 py-4 font-mono text-green-400">{result.lap_time || '-'}</td>
+                      <td class="px-6 py-4 text-gray-400">{result.laps_completed || 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+      </div>
+    )}
+
+    {session === 'practice' && !practiceData && (
+      <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-8">
+        <div class="text-center py-12">
+          <p class="text-gray-400 text-lg mb-4">🔧 Practice Sessions</p>
+          <p class="text-gray-500">No practice session data available for this event</p>
+        </div>
+      </div>
+    )}
+
+    <!-- Data Tab -->
+    {session === 'data' && sessionData && (
+      <div class="space-y-6">
+        {/* Lap Times */}
+        {sessionData.lap_times && sessionData.lap_times.length > 0 && (
+          <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
+            <div class="bg-gray-800/50 px-6 py-3 border-b border-gray-700">
+              <h3 class="text-lg font-bold">Lap Times</h3>
+            </div>
+            <table class="w-full">
+              <thead class="bg-gray-800/30 border-b border-gray-700">
+                <tr>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Pos</th>
+                  <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Driver</th>
+                  <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Team</th>
+                  <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Fastest Lap</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-800">
+                {sessionData.lap_times.slice(0, 10).map((lap: any, index: number) => (
+                  <tr class="hover:bg-gray-800/50">
+                    <td class="px-6 py-4 font-bold">{index + 1}</td>
+                    <td class="px-6 py-4">{lap.driver}</td>
+                    <td class="px-6 py-4 text-gray-400">{lap.team}</td>
+                    <td class="px-6 py-4 font-mono text-green-400">{lap.fastest_lap || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Weather Data */}
+        {sessionData.weather && sessionData.weather.length > 0 && (
+          <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
+            <div class="bg-gray-800/50 px-6 py-3 border-b border-gray-700">
+              <h3 class="text-lg font-bold">Weather Conditions</h3>
+            </div>
+            <div class="p-6 grid grid-cols-2 md:grid-cols-4 gap-4">
+              {sessionData.weather.slice(0, 1).map((weather: any) => (
+                <>
+                  <div>
+                    <p class="text-xs text-gray-500 uppercase">Air Temp</p>
+                    <p class="text-2xl font-bold">{weather.AirTemp}°C</p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 uppercase">Track Temp</p>
+                    <p class="text-2xl font-bold">{weather.TrackTemp}°C</p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 uppercase">Humidity</p>
+                    <p class="text-2xl font-bold">{weather.Humidity}%</p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 uppercase">Pressure</p>
+                    <p class="text-2xl font-bold">{weather.Pressure} mbar</p>
+                  </div>
+                </>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Race Control Messages */}
+        {sessionData.race_control_messages && sessionData.race_control_messages.length > 0 && (
+          <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
+            <div class="bg-gray-800/50 px-6 py-3 border-b border-gray-700">
+              <h3 class="text-lg font-bold">Race Control Messages</h3>
+            </div>
+            <div class="p-6 space-y-3 max-h-96 overflow-y-auto">
+              {sessionData.race_control_messages.slice(0, 20).map((msg: any) => (
+                <div class="border-l-2 border-red-500 pl-4 py-2">
+                  <p class="text-sm font-mono text-gray-400">{msg.Time}</p>
+                  <p class="text-sm">{msg.Message}</p>
+                  {msg.Category && (
+                    <span class="inline-block mt-1 px-2 py-0.5 bg-gray-800 text-xs rounded">{msg.Category}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+
+    {session === 'data' && !sessionData && (
+      <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-8">
+        <div class="text-center py-12">
+          <p class="text-gray-400 text-lg mb-4">📊 Advanced Data</p>
+          <p class="text-gray-500">No session data available for this event</p>
+        </div>
+      </div>
+    )}
+
+    {session === 'race' && results.length === 0 && (
       <div class="text-center py-12 text-gray-500">
         No race results available for this event.
       </div>

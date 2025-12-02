@@ -1,6 +1,6 @@
 """FastAPI application combining ESPN and FastF1 APIs."""
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import Optional, Any
@@ -8,6 +8,7 @@ import logging
 import pandas as pd
 import numpy as np
 import json
+import asyncio
 
 from ..espn.client import ESPNClient
 from ..fastf1.client import FastF1Client
@@ -41,6 +42,17 @@ def json_safe(data: Any) -> Any:
     elif pd.isna(data):
         return None
     return data
+
+
+def format_timedelta(td):
+    """Format timedelta to MM:SS.mmm format."""
+    if pd.isna(td):
+        return None
+    total_seconds = td.total_seconds()
+    minutes = int(total_seconds // 60)
+    seconds = int(total_seconds % 60)
+    milliseconds = int((total_seconds % 1) * 1000)
+    return f"{minutes}:{seconds:02d}.{milliseconds:03d}"
 
 
 def dataframe_to_json_safe(df):
@@ -443,6 +455,59 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
             logger.error(f"Error fetching race results: {e}")
             raise HTTPException(500, str(e))
 
+    def load_fastf1_data_background(year: int, round_number: int):
+        """Background task to load and cache FastF1 data for a race."""
+        try:
+            logger.info(f"Background loading FastF1 data for {year} round {round_number}")
+
+            # Load qualifying data
+            try:
+                session = ff1.load_session(year, round_number, 'Q', telemetry=False, weather=False, messages=False)
+                logger.info(f"Loaded qualifying data for {year} round {round_number}")
+            except Exception as e:
+                logger.warning(f"Could not load qualifying data: {e}")
+
+            # Load race data
+            try:
+                session = ff1.load_session(year, round_number, 'R', telemetry=False, weather=False, messages=False)
+                logger.info(f"Loaded race data for {year} round {round_number}")
+            except Exception as e:
+                logger.warning(f"Could not load race data: {e}")
+
+            # Load practice data
+            for practice in ['FP1', 'FP2', 'FP3']:
+                try:
+                    session = ff1.load_session(year, round_number, practice, telemetry=False, weather=False, messages=False)
+                    logger.info(f"Loaded {practice} data for {year} round {round_number}")
+                except Exception as e:
+                    logger.warning(f"Could not load {practice} data: {e}")
+
+            # Load sprint data if available
+            try:
+                session = ff1.load_session(year, round_number, 'S', telemetry=False, weather=False, messages=False)
+                logger.info(f"Loaded sprint data for {year} round {round_number}")
+            except Exception as e:
+                logger.warning(f"Could not load sprint data: {e}")
+
+            logger.info(f"Completed background loading for {year} round {round_number}")
+        except Exception as e:
+            logger.error(f"Error in background loading: {e}")
+
+    @app.post("/fastf1/preload/{year}/{round_number}")
+    async def preload_fastf1_data(year: int, round_number: int, background_tasks: BackgroundTasks):
+        """Trigger background loading of FastF1 data for a race.
+
+        Args:
+            year: Championship year
+            round_number: Race round number
+            background_tasks: FastAPI background tasks
+
+        Returns:
+            Acknowledgment that loading has started
+        """
+        background_tasks.add_task(load_fastf1_data_background, year, round_number)
+        return {"status": "loading", "message": f"Started loading FastF1 data for {year} round {round_number}"}
+
     @app.get("/fastf1/session/{year}/{gp}/{session_type}")
     def get_session_info(year: int, gp: str, session_type: str):
         """Get session information and results.
@@ -598,6 +663,380 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
             })
         except Exception as e:
             logger.error(f"Error comparing drivers: {e}")
+            raise HTTPException(500, str(e))
+
+    @app.get("/fastf1/qualifying/{year}/{round_number}")
+    def get_qualifying_results(year: int, round_number: int):
+        """Get qualifying results split by Q1, Q2, Q3.
+
+        Args:
+            year: Championship year
+            round_number: Race round number
+
+        Returns:
+            Qualifying results for each session (Q1, Q2, Q3)
+        """
+        import sqlite3
+        try:
+            import os
+            db_path = os.path.join(os.path.dirname(__file__), '../../../f1_data.db')
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Check if we have cached data in database
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM fastf1_qualifying_results
+                WHERE year = ? AND round_number = ?
+            """, (year, round_number))
+
+            has_data = cursor.fetchone()['count'] > 0
+
+            if has_data:
+                # Load from database
+                logger.info(f"Loading qualifying data from database for {year} round {round_number}")
+
+                def load_session_from_db(session_name):
+                    cursor.execute("""
+                        SELECT driver_abbreviation as driver, driver_number, team, lap_time,
+                               sector1_time, sector2_time, sector3_time
+                        FROM fastf1_qualifying_results
+                        WHERE year = ? AND round_number = ? AND session_name = ?
+                        ORDER BY lap_time
+                    """, (year, round_number, session_name))
+                    return [dict(row) for row in cursor.fetchall()]
+
+                result = {
+                    'q1': load_session_from_db('Q1'),
+                    'q2': load_session_from_db('Q2'),
+                    'q3': load_session_from_db('Q3'),
+                }
+                conn.close()
+                return json_safe(result)
+
+            # Not in database, fetch from FastF1
+            logger.info(f"Loading qualifying data from FastF1 for {year} round {round_number}")
+            session = ff1.load_session(year, round_number, 'Q', telemetry=False)
+
+            # Split qualifying into Q1, Q2, Q3
+            q1, q2, q3 = session.laps.split_qualifying_sessions()
+
+            def format_quali_session(q_session, session_name):
+                if q_session is None or q_session.empty:
+                    return []
+
+                # Get fastest lap per driver
+                results = []
+                for driver in q_session['DriverNumber'].unique():
+                    driver_laps = q_session[q_session['DriverNumber'] == driver]
+                    fastest = driver_laps.loc[driver_laps['LapTime'].idxmin()] if not driver_laps['LapTime'].isna().all() else None
+
+                    if fastest is not None:
+                        result = {
+                            'driver': fastest['Driver'],
+                            'driver_number': int(fastest['DriverNumber']),
+                            'team': fastest['Team'],
+                            'lap_time': format_timedelta(fastest['LapTime']),
+                            'sector1_time': format_timedelta(fastest['Sector1Time']),
+                            'sector2_time': format_timedelta(fastest['Sector2Time']),
+                            'sector3_time': format_timedelta(fastest['Sector3Time']),
+                        }
+                        results.append(result)
+
+                        # Save to database
+                        try:
+                            cursor.execute("""
+                                INSERT OR REPLACE INTO fastf1_qualifying_results
+                                (year, round_number, session_name, driver_abbreviation, driver_number, team,
+                                 lap_time, sector1_time, sector2_time, sector3_time)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (year, round_number, session_name, result['driver'], result['driver_number'],
+                                  result['team'], result['lap_time'], result['sector1_time'],
+                                  result['sector2_time'], result['sector3_time']))
+                        except Exception as e:
+                            logger.warning(f"Could not save qualifying result to DB: {e}")
+
+                # Sort by lap time
+                results.sort(key=lambda x: x['lap_time'] if x['lap_time'] else 'Z')
+                return results
+
+            result = {
+                'q1': format_quali_session(q1, 'Q1'),
+                'q2': format_quali_session(q2, 'Q2'),
+                'q3': format_quali_session(q3, 'Q3'),
+            }
+
+            conn.commit()
+            conn.close()
+            logger.info(f"Saved qualifying data to database for {year} round {round_number}")
+
+            return json_safe(result)
+        except Exception as e:
+            logger.error(f"Error getting qualifying results: {e}")
+            raise HTTPException(500, str(e))
+
+    @app.get("/fastf1/practice/{year}/{round_number}")
+    def get_practice_results(year: int, round_number: int):
+        """Get practice session results for FP1, FP2, FP3.
+
+        Args:
+            year: Championship year
+            round_number: Race round number
+
+        Returns:
+            Practice session results for each session
+        """
+        import sqlite3
+        try:
+            import os
+            db_path = os.path.join(os.path.dirname(__file__), '../../../f1_data.db')
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Check if we have cached data in database
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM fastf1_practice_results
+                WHERE year = ? AND round_number = ?
+            """, (year, round_number))
+
+            has_data = cursor.fetchone()['count'] > 0
+
+            if has_data:
+                # Load from database
+                logger.info(f"Loading practice data from database for {year} round {round_number}")
+
+                def load_session_from_db(session_name):
+                    cursor.execute("""
+                        SELECT driver_abbreviation as driver, driver_number, team, lap_time, laps_completed
+                        FROM fastf1_practice_results
+                        WHERE year = ? AND round_number = ? AND session_name = ?
+                        ORDER BY lap_time
+                    """, (year, round_number, session_name))
+                    return [dict(row) for row in cursor.fetchall()]
+
+                result = {
+                    'fp1': load_session_from_db('FP1'),
+                    'fp2': load_session_from_db('FP2'),
+                    'fp3': load_session_from_db('FP3'),
+                }
+                conn.close()
+                return json_safe(result)
+
+            # Not in database, fetch from FastF1
+            logger.info(f"Loading practice data from FastF1 for {year} round {round_number}")
+            results = {}
+
+            # Try to load each practice session
+            for session_name in ['FP1', 'FP2', 'FP3']:
+                try:
+                    session = ff1.load_session(year, round_number, session_name, telemetry=False)
+
+                    # Get fastest lap per driver
+                    session_results = []
+                    for driver in session.laps['DriverNumber'].unique():
+                        driver_laps = session.laps[session.laps['DriverNumber'] == driver]
+                        fastest = driver_laps.loc[driver_laps['LapTime'].idxmin()] if not driver_laps['LapTime'].isna().all() else None
+
+                        if fastest is not None:
+                            result = {
+                                'driver': fastest['Driver'],
+                                'driver_number': int(fastest['DriverNumber']),
+                                'team': fastest['Team'],
+                                'lap_time': format_timedelta(fastest['LapTime']),
+                                'laps_completed': int(len(driver_laps)),
+                            }
+                            session_results.append(result)
+
+                            # Save to database
+                            try:
+                                cursor.execute("""
+                                    INSERT OR REPLACE INTO fastf1_practice_results
+                                    (year, round_number, session_name, driver_abbreviation, driver_number, team,
+                                     lap_time, laps_completed)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                """, (year, round_number, session_name, result['driver'], result['driver_number'],
+                                      result['team'], result['lap_time'], result['laps_completed']))
+                            except Exception as e:
+                                logger.warning(f"Could not save practice result to DB: {e}")
+
+                    # Sort by lap time
+                    session_results.sort(key=lambda x: x['lap_time'] if x['lap_time'] else 'Z')
+                    results[session_name.lower()] = session_results
+
+                except Exception as e:
+                    logger.warning(f"Could not load {session_name}: {e}")
+                    results[session_name.lower()] = []
+
+            conn.commit()
+            conn.close()
+            logger.info(f"Saved practice data to database for {year} round {round_number}")
+
+            return json_safe(results)
+        except Exception as e:
+            logger.error(f"Error getting practice results: {e}")
+            raise HTTPException(500, str(e))
+
+    @app.get("/fastf1/sprint/{year}/{round_number}")
+    def get_sprint_results(year: int, round_number: int):
+        """Get sprint race results.
+
+        Args:
+            year: Championship year
+            round_number: Race round number
+
+        Returns:
+            Sprint race results
+        """
+        import sqlite3
+        try:
+            import os
+            db_path = os.path.join(os.path.dirname(__file__), '../../../f1_data.db')
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Check if we have cached data in database
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM fastf1_sprint_results
+                WHERE year = ? AND round_number = ?
+            """, (year, round_number))
+
+            has_data = cursor.fetchone()['count'] > 0
+
+            if has_data:
+                # Load from database
+                logger.info(f"Loading sprint data from database for {year} round {round_number}")
+                cursor.execute("""
+                    SELECT driver_abbreviation as driver, driver_number, team, position,
+                           grid_position, points, status
+                    FROM fastf1_sprint_results
+                    WHERE year = ? AND round_number = ?
+                    ORDER BY position
+                """, (year, round_number))
+
+                sprint_results = [dict(row) for row in cursor.fetchall()]
+                conn.close()
+                return json_safe({"results": sprint_results})
+
+            # Not in database, fetch from FastF1
+            logger.info(f"Loading sprint data from FastF1 for {year} round {round_number}")
+
+            # Try different sprint session identifiers
+            session_identifiers = ['S', 'Sprint']
+            session = None
+
+            for identifier in session_identifiers:
+                try:
+                    session = ff1.load_session(year, round_number, identifier, telemetry=False)
+                    break
+                except:
+                    continue
+
+            if session is None:
+                conn.close()
+                return {"results": [], "message": "No sprint race for this event"}
+
+            # Get results from session
+            results = session.results
+
+            sprint_results = []
+            for _, driver in results.iterrows():
+                result = {
+                    'position': int(driver['Position']) if pd.notna(driver['Position']) else None,
+                    'driver': driver['Abbreviation'],
+                    'driver_number': int(driver['DriverNumber']) if pd.notna(driver['DriverNumber']) else None,
+                    'team': driver['TeamName'],
+                    'grid_position': int(driver['GridPosition']) if pd.notna(driver['GridPosition']) else None,
+                    'points': float(driver['Points']) if pd.notna(driver['Points']) else 0,
+                    'status': driver['Status'] if pd.notna(driver['Status']) else 'Unknown',
+                }
+                sprint_results.append(result)
+
+                # Save to database
+                try:
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO fastf1_sprint_results
+                        (year, round_number, driver_abbreviation, driver_number, team,
+                         position, grid_position, points, status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (year, round_number, result['driver'], result['driver_number'],
+                          result['team'], result['position'], result['grid_position'],
+                          result['points'], result['status']))
+                except Exception as e:
+                    logger.warning(f"Could not save sprint result to DB: {e}")
+
+            conn.commit()
+            conn.close()
+            logger.info(f"Saved sprint data to database for {year} round {round_number}")
+
+            return json_safe({"results": sprint_results})
+        except Exception as e:
+            logger.error(f"Error getting sprint results: {e}")
+            raise HTTPException(500, str(e))
+
+    @app.get("/fastf1/session-data/{year}/{round_number}/{session_type}")
+    def get_session_data(year: int, round_number: int, session_type: str):
+        """Get advanced session data including weather, track status, and race control messages.
+
+        Args:
+            year: Championship year
+            round_number: Race round number
+            session_type: Session type (R, Q, S, FP1, FP2, FP3)
+
+        Returns:
+            Advanced session data
+        """
+        try:
+            session = ff1.load_session(
+                year, round_number, session_type,
+                telemetry=False, weather=True, messages=True
+            )
+
+            # Weather data
+            weather_data = []
+            if hasattr(session, 'weather_data') and session.weather_data is not None:
+                weather_df = session.weather_data.head(20)  # Limit to 20 samples
+                weather_data = dataframe_to_json_safe(weather_df)
+
+            # Track status data
+            track_status_data = []
+            if hasattr(session, 'track_status') and session.track_status is not None:
+                track_status_df = session.track_status
+                track_status_data = dataframe_to_json_safe(track_status_df)
+
+            # Race control messages
+            messages_data = []
+            if hasattr(session, 'race_control_messages') and session.race_control_messages is not None:
+                messages_df = session.race_control_messages
+                messages_data = dataframe_to_json_safe(messages_df)
+
+            # Lap times summary
+            lap_times = []
+            if hasattr(session, 'laps') and session.laps is not None:
+                for driver in session.laps['DriverNumber'].unique():
+                    driver_laps = session.laps[session.laps['DriverNumber'] == driver]
+                    fastest = driver_laps.loc[driver_laps['LapTime'].idxmin()] if not driver_laps['LapTime'].isna().all() else None
+
+                    if fastest is not None:
+                        lap_times.append({
+                            'driver': fastest['Driver'],
+                            'driver_number': int(fastest['DriverNumber']),
+                            'team': fastest['Team'],
+                            'fastest_lap': format_timedelta(fastest['LapTime']),
+                            'average_speed': float(fastest['SpeedI1']) if pd.notna(fastest['SpeedI1']) else None,
+                        })
+
+                lap_times.sort(key=lambda x: x['fastest_lap'] if x['fastest_lap'] else 'Z')
+
+            return json_safe({
+                'weather': weather_data,
+                'track_status': track_status_data,
+                'race_control_messages': messages_data,
+                'lap_times': lap_times,
+            })
+        except Exception as e:
+            logger.error(f"Error getting session data: {e}")
             raise HTTPException(500, str(e))
 
     @app.get("/drivers")
