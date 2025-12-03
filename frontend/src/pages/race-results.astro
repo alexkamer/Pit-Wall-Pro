@@ -28,7 +28,17 @@ let practiceData: any = null;
 let sprintData: any = null;
 let sessionData: any = null;
 
-if (session === 'qualifying') {
+// Always check for sprint data to determine if it's a sprint weekend
+try {
+  sprintData = await getSprintResults(year, round);
+} catch (e) {
+  // Sprint data not available - normal weekend
+}
+
+// Determine if this is a sprint weekend
+const isSprintWeekend = sprintData && sprintData.results && sprintData.results.length > 0;
+
+if (session === 'qualifying' || session === 'sprint-qualifying') {
   try {
     qualifyingData = await getQualifyingResults(year, round);
   } catch (e) {
@@ -40,12 +50,6 @@ if (session === 'qualifying') {
   } catch (e) {
     console.error('Error fetching practice data:', e);
   }
-} else if (session === 'sprint') {
-  try {
-    sprintData = await getSprintResults(year, round);
-  } catch (e) {
-    console.error('Error fetching sprint data:', e);
-  }
 } else if (session === 'data') {
   try {
     sessionData = await getSessionData(year, round, 'R');
@@ -54,14 +58,124 @@ if (session === 'qualifying') {
   }
 }
 
-// Define available tabs
+// Define available tabs dynamically based on weekend format
 const tabs = [
   { id: 'race', label: 'Race', icon: '🏁' },
-  { id: 'qualifying', label: 'Qualifying', icon: '⏱️' },
-  { id: 'sprint', label: 'Sprint', icon: '⚡' },
+  ...(isSprintWeekend
+    ? [
+        { id: 'sprint-qualifying', label: 'Sprint Qualifying', icon: '🏃' },
+        { id: 'sprint', label: 'Sprint', icon: '⚡' },
+        { id: 'qualifying', label: 'Qualifying', icon: '⏱️' },
+      ]
+    : [
+        { id: 'qualifying', label: 'Qualifying', icon: '⏱️' },
+      ]
+  ),
   { id: 'practice', label: 'Practice', icon: '🔧' },
   { id: 'data', label: 'Data', icon: '📊' },
 ];
+
+// Process qualifying data into combined results
+let qualifyingCombinedResults: any[] = [];
+if (qualifyingData) {
+  // Add Q3 drivers (positions 1-10)
+  if (qualifyingData.q3) {
+    qualifyingData.q3.forEach((q3Result: any) => {
+      const q2Result = qualifyingData.q2?.find((r: any) => r.driver === q3Result.driver);
+      const q1Result = qualifyingData.q1?.find((r: any) => r.driver === q3Result.driver);
+      qualifyingCombinedResults.push({
+        driver: q3Result.driver,
+        driver_number: q3Result.driver_number,
+        driver_id: q3Result.driver_id,
+        team: q3Result.team,
+        team_color: q3Result.team_color,
+        q1_time: q1Result?.lap_time || '-',
+        q2_time: q2Result?.lap_time || '-',
+        q3_time: q3Result.lap_time || '-'
+      });
+    });
+  }
+
+  // Add Q2 drivers who didn't make Q3 (positions 11-15)
+  if (qualifyingData.q2) {
+    const q3Drivers = new Set(qualifyingData.q3?.map((r: any) => r.driver) || []);
+    qualifyingData.q2.filter((q2Result: any) => !q3Drivers.has(q2Result.driver)).forEach((q2Result: any) => {
+      const q1Result = qualifyingData.q1?.find((r: any) => r.driver === q2Result.driver);
+      qualifyingCombinedResults.push({
+        driver: q2Result.driver,
+        driver_number: q2Result.driver_number,
+        driver_id: q2Result.driver_id,
+        team: q2Result.team,
+        team_color: q2Result.team_color,
+        q1_time: q1Result?.lap_time || '-',
+        q2_time: q2Result.lap_time || '-',
+        q3_time: '-'
+      });
+    });
+  }
+
+  // Add Q1 drivers who didn't make Q2 (positions 16-20)
+  if (qualifyingData.q1) {
+    const q2Drivers = new Set(qualifyingData.q2?.map((r: any) => r.driver) || []);
+    qualifyingData.q1.filter((q1Result: any) => !q2Drivers.has(q1Result.driver)).forEach((q1Result: any) => {
+      qualifyingCombinedResults.push({
+        driver: q1Result.driver,
+        driver_number: q1Result.driver_number,
+        driver_id: q1Result.driver_id,
+        team: q1Result.team,
+        team_color: q1Result.team_color,
+        q1_time: q1Result.lap_time || '-',
+        q2_time: '-',
+        q3_time: '-'
+      });
+    });
+  }
+}
+
+// Process practice data into combined results
+let practiceCombinedResults: any[] = [];
+if (practiceData) {
+  const allDrivers = new Set<string>();
+
+  ['fp1', 'fp2', 'fp3'].forEach((fp) => {
+    practiceData[fp]?.forEach((result: any) => {
+      allDrivers.add(result.driver);
+    });
+  });
+
+  allDrivers.forEach((driverName) => {
+    const fp1Result = practiceData.fp1?.find((r: any) => r.driver === driverName);
+    const fp2Result = practiceData.fp2?.find((r: any) => r.driver === driverName);
+    const fp3Result = practiceData.fp3?.find((r: any) => r.driver === driverName);
+
+    const times = [fp1Result, fp2Result, fp3Result]
+      .filter(r => r?.lap_time && r.lap_time !== '-')
+      .map(r => r.lap_time);
+
+    const bestTime = times.length > 0 ? times.sort()[0] : null;
+
+    practiceCombinedResults.push({
+      driver: driverName,
+      driver_number: fp3Result?.driver_number || fp2Result?.driver_number || fp1Result?.driver_number,
+      driver_id: fp3Result?.driver_id || fp2Result?.driver_id || fp1Result?.driver_id,
+      team: fp3Result?.team || fp2Result?.team || fp1Result?.team,
+      team_color: fp3Result?.team_color || fp2Result?.team_color || fp1Result?.team_color,
+      fp1_time: fp1Result?.lap_time || '-',
+      fp2_time: fp2Result?.lap_time || '-',
+      fp3_time: fp3Result?.lap_time || '-',
+      fp1_laps: fp1Result?.laps_completed || 0,
+      fp2_laps: fp2Result?.laps_completed || 0,
+      fp3_laps: fp3Result?.laps_completed || 0,
+      bestTime: bestTime
+    });
+  });
+
+  practiceCombinedResults.sort((a, b) => {
+    if (!a.bestTime) return 1;
+    if (!b.bestTime) return -1;
+    return a.bestTime.localeCompare(b.bestTime);
+  });
+}
 ---
 
 <Layout title={`${race.eventName} ${year} Results`}>
@@ -206,100 +320,55 @@ const tabs = [
     </div>
     )}
 
-    <!-- Qualifying Tab -->
-    {session === 'qualifying' && qualifyingData && (() => {
-      // Build combined results in correct qualifying order
-      const combinedResults: any[] = [];
-
-      // Add Q3 drivers (positions 1-10) - already sorted by Q3 time
-      if (qualifyingData.q3) {
-        qualifyingData.q3.forEach((q3Result: any) => {
-          const q2Result = qualifyingData.q2?.find((r: any) => r.driver === q3Result.driver);
-          const q1Result = qualifyingData.q1?.find((r: any) => r.driver === q3Result.driver);
-          combinedResults.push({
-            driver: q3Result.driver,
-            driver_number: q3Result.driver_number,
-            team: q3Result.team,
-            q1_time: q1Result?.lap_time || '-',
-            q2_time: q2Result?.lap_time || '-',
-            q3_time: q3Result.lap_time || '-'
-          });
-        });
-      }
-
-      // Add Q2 drivers who didn't make Q3 (positions 11-15)
-      if (qualifyingData.q2) {
-        const q3Drivers = new Set(qualifyingData.q3?.map((r: any) => r.driver) || []);
-        qualifyingData.q2.filter((q2Result: any) => !q3Drivers.has(q2Result.driver)).forEach((q2Result: any) => {
-          const q1Result = qualifyingData.q1?.find((r: any) => r.driver === q2Result.driver);
-          combinedResults.push({
-            driver: q2Result.driver,
-            driver_number: q2Result.driver_number,
-            team: q2Result.team,
-            q1_time: q1Result?.lap_time || '-',
-            q2_time: q2Result.lap_time || '-',
-            q3_time: '-'
-          });
-        });
-      }
-
-      // Add Q1 drivers who didn't make Q2 (positions 16-20)
-      if (qualifyingData.q1) {
-        const q2Drivers = new Set(qualifyingData.q2?.map((r: any) => r.driver) || []);
-        qualifyingData.q1.filter((q1Result: any) => !q2Drivers.has(q1Result.driver)).forEach((q1Result: any) => {
-          combinedResults.push({
-            driver: q1Result.driver,
-            driver_number: q1Result.driver_number,
-            team: q1Result.team,
-            q1_time: q1Result.lap_time || '-',
-            q2_time: '-',
-            q3_time: '-'
-          });
-        });
-      }
-
-      return (
-        <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
-          <table class="w-full">
-            <thead class="bg-gray-800/50 border-b border-gray-700">
-              <tr>
-                <th class="px-4 py-4 text-left text-xs font-medium text-gray-400 uppercase">Pos</th>
-                <th class="px-4 py-4 text-left text-xs font-medium text-gray-400 uppercase">Driver</th>
-                <th class="px-4 py-4 text-left text-xs font-medium text-gray-400 uppercase">Team</th>
-                <th class="px-4 py-4 text-left text-xs font-medium text-blue-500 uppercase">Q1</th>
-                <th class="px-4 py-4 text-left text-xs font-medium text-orange-500 uppercase">Q2</th>
-                <th class="px-4 py-4 text-left text-xs font-medium text-red-500 uppercase">Q3</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-800">
-              {combinedResults.map((result: any, index: number) => (
-                <tr class="hover:bg-gray-800/50">
-                  <td class="px-4 py-4 font-bold text-yellow-400">{index + 1}</td>
-                  <td class="px-4 py-4">
-                    <div class="flex items-center gap-2">
-                      <span class="px-2 py-1 rounded font-bold text-xs text-white bg-gray-700">
+    <!-- Qualifying Tab (Main Race or Sprint Qualifying) -->
+    {(session === 'qualifying' || session === 'sprint-qualifying') && qualifyingData && (
+      <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
+        <table class="w-full">
+          <thead class="bg-gray-800/50 border-b border-gray-700">
+            <tr>
+              <th class="px-4 py-4 text-left text-xs font-medium text-gray-400 uppercase">Pos</th>
+              <th class="px-4 py-4 text-left text-xs font-medium text-gray-400 uppercase">Driver</th>
+              <th class="px-4 py-4 text-left text-xs font-medium text-gray-400 uppercase">Team</th>
+              <th class="px-4 py-4 text-left text-xs font-medium text-blue-500 uppercase">Q1</th>
+              <th class="px-4 py-4 text-left text-xs font-medium text-orange-500 uppercase">Q2</th>
+              <th class="px-4 py-4 text-left text-xs font-medium text-red-500 uppercase">Q3</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800">
+            {qualifyingCombinedResults.map((result: any, index: number) => (
+              <tr class="hover:bg-gray-800/50">
+                <td class="px-4 py-4 font-bold text-yellow-400">{index + 1}</td>
+                <td class="px-4 py-4">
+                  <div class="flex items-center gap-3">
+                    {result.driver_number && (
+                      <span
+                        class="px-2 py-1 rounded font-bold text-xs text-white"
+                        style={`background-color: ${result.team_color || '#666'};`}
+                      >
                         #{result.driver_number}
                       </span>
-                      <span>{result.driver}</span>
-                    </div>
-                  </td>
-                  <td class="px-4 py-4 text-gray-400 text-sm">{result.team}</td>
-                  <td class="px-4 py-4 font-mono text-green-400">{result.q1_time}</td>
-                  <td class="px-4 py-4 font-mono text-green-400">{result.q2_time}</td>
-                  <td class="px-4 py-4 font-mono text-green-400">{result.q3_time}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-    })()}
+                    )}
+                    <a href={`/drivers/profile/${result.driver_id}`} class="font-medium hover:text-red-400 transition-colors">
+                      {result.driver}
+                    </a>
+                  </div>
+                </td>
+                <td class="px-4 py-4 text-gray-400 text-sm">{result.team}</td>
+                <td class="px-4 py-4 font-mono text-green-400">{result.q1_time}</td>
+                <td class="px-4 py-4 font-mono text-green-400">{result.q2_time}</td>
+                <td class="px-4 py-4 font-mono text-green-400">{result.q3_time}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
 
-    {session === 'qualifying' && !qualifyingData && (
+    {(session === 'qualifying' || session === 'sprint-qualifying') && !qualifyingData && (
       <div class="bg-gray-900/50 border border-gray-800 rounded-lg p-8">
         <div class="text-center py-12">
-          <p class="text-gray-400 text-lg mb-4">⏱️ Qualifying Results</p>
-          <p class="text-gray-500">No qualifying data available for this event</p>
+          <p class="text-gray-400 text-lg mb-4">⏱️ {session === 'sprint-qualifying' ? 'Sprint Qualifying' : 'Qualifying'} Results</p>
+          <p class="text-gray-500">No {session === 'sprint-qualifying' ? 'sprint qualifying' : 'qualifying'} data available for this event</p>
         </div>
       </div>
     )}
@@ -323,11 +392,18 @@ const tabs = [
               <tr class="hover:bg-gray-800/50">
                 <td class="px-6 py-4 font-bold text-yellow-400">{result.position || '-'}</td>
                 <td class="px-6 py-4">
-                  <div class="flex items-center gap-2">
-                    <span class="px-2 py-1 rounded font-bold text-xs text-white bg-gray-700">
-                      #{result.driver_number}
-                    </span>
-                    <span>{result.driver}</span>
+                  <div class="flex items-center gap-3">
+                    {result.driver_number && (
+                      <span
+                        class="px-2 py-1 rounded font-bold text-xs text-white"
+                        style={`background-color: ${result.team_color || '#666'};`}
+                      >
+                        #{result.driver_number}
+                      </span>
+                    )}
+                    <a href={`/drivers/profile/${result.driver_id}`} class="font-medium hover:text-red-400 transition-colors">
+                      {result.driver}
+                    </a>
                   </div>
                 </td>
                 <td class="px-6 py-4 text-gray-400">{result.team}</td>
@@ -352,47 +428,78 @@ const tabs = [
 
     <!-- Practice Tab -->
     {session === 'practice' && practiceData && (
-      <div class="space-y-6">
-        {['fp3', 'fp2', 'fp1'].map((fp) => {
-          const sessionResults = practiceData[fp];
-          const sessionLabel = fp.toUpperCase();
-          return sessionResults && sessionResults.length > 0 && (
-            <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
-              <div class="bg-gray-800/50 px-6 py-3 border-b border-gray-700">
-                <h3 class="text-lg font-bold text-blue-500">{sessionLabel}</h3>
-              </div>
-              <table class="w-full">
-                <thead class="bg-gray-800/30 border-b border-gray-700">
-                  <tr>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Pos</th>
-                    <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Driver</th>
-                    <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Team</th>
-                    <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Best Time</th>
-                    <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase">Laps</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-800">
-                  {sessionResults.map((result: any, index: number) => (
-                    <tr class="hover:bg-gray-800/50">
-                      <td class="px-6 py-4 font-bold">{index + 1}</td>
-                      <td class="px-6 py-4">
-                        <div class="flex items-center gap-2">
-                          <span class="px-2 py-1 rounded font-bold text-xs text-white bg-gray-700">
-                            #{result.driver_number}
-                          </span>
-                          <span>{result.driver}</span>
-                        </div>
-                      </td>
-                      <td class="px-6 py-4 text-gray-400">{result.team}</td>
-                      <td class="px-6 py-4 font-mono text-green-400">{result.lap_time || '-'}</td>
-                      <td class="px-6 py-4 text-gray-400">{result.laps_completed || 0}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          );
-        })}
+      <div class="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
+        <table class="w-full" id="practice-table">
+          <thead class="bg-gray-800/50 border-b border-gray-700">
+            <tr>
+              <th class="px-4 py-4 text-left text-xs font-medium text-gray-400 uppercase">Pos</th>
+              <th class="px-4 py-4 text-left text-xs font-medium text-gray-400 uppercase">Driver</th>
+              <th class="px-4 py-4 text-left text-xs font-medium text-gray-400 uppercase">Team</th>
+              <th
+                class="px-4 py-4 text-left text-xs font-medium text-blue-500 uppercase cursor-pointer hover:text-blue-400 transition-colors select-none"
+                data-sort="fp1"
+                title="Click to sort by FP1 time"
+              >
+                <div class="flex items-center gap-1">
+                  <span>FP1</span>
+                  <span class="sort-indicator text-xs opacity-0">▼</span>
+                </div>
+              </th>
+              <th
+                class="px-4 py-4 text-left text-xs font-medium text-orange-500 uppercase cursor-pointer hover:text-orange-400 transition-colors select-none"
+                data-sort="fp2"
+                title="Click to sort by FP2 time"
+              >
+                <div class="flex items-center gap-1">
+                  <span>FP2</span>
+                  <span class="sort-indicator text-xs opacity-0">▼</span>
+                </div>
+              </th>
+              <th
+                class="px-4 py-4 text-left text-xs font-medium text-red-500 uppercase cursor-pointer hover:text-red-400 transition-colors select-none"
+                data-sort="fp3"
+                title="Click to sort by FP3 time"
+              >
+                <div class="flex items-center gap-1">
+                  <span>FP3</span>
+                  <span class="sort-indicator text-xs opacity-0">▼</span>
+                </div>
+              </th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800" id="practice-tbody">
+            {practiceCombinedResults.map((result: any, index: number) => (
+              <tr class="hover:bg-gray-800/50" data-fp1={result.fp1_time} data-fp2={result.fp2_time} data-fp3={result.fp3_time}>
+                <td class="px-4 py-4 font-bold text-yellow-400 position-cell">{index + 1}</td>
+                <td class="px-4 py-4">
+                  <div class="flex items-center gap-3">
+                    {result.driver_number && (
+                      <span
+                        class="px-2 py-1 rounded font-bold text-xs text-white"
+                        style={`background-color: ${result.team_color || '#666'};`}
+                      >
+                        #{result.driver_number}
+                      </span>
+                    )}
+                    <a href={`/drivers/profile/${result.driver_id}`} class="font-medium hover:text-red-400 transition-colors">
+                      {result.driver}
+                    </a>
+                  </div>
+                </td>
+                <td class="px-4 py-4 text-gray-400 text-sm">{result.team}</td>
+                <td class="px-4 py-4 font-mono text-green-400 relative practice-time-cell" data-laps={result.fp1_laps} title={result.fp1_laps > 0 ? `${result.fp1_laps} laps` : ''}>
+                  {result.fp1_time}
+                </td>
+                <td class="px-4 py-4 font-mono text-green-400 relative practice-time-cell" data-laps={result.fp2_laps} title={result.fp2_laps > 0 ? `${result.fp2_laps} laps` : ''}>
+                  {result.fp2_time}
+                </td>
+                <td class="px-4 py-4 font-mono text-green-400 relative practice-time-cell" data-laps={result.fp3_laps} title={result.fp3_laps > 0 ? `${result.fp3_laps} laps` : ''}>
+                  {result.fp3_time}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     )}
 
@@ -506,3 +613,133 @@ const tabs = [
     )}
   </div>
 </Layout>
+
+<script>
+  // Practice table sorting functionality
+  document.addEventListener('DOMContentLoaded', () => {
+    const practiceTable = document.getElementById('practice-table');
+    if (!practiceTable) return;
+
+    const tbody = document.getElementById('practice-tbody');
+    if (!tbody) return;
+
+    const sortHeaders = practiceTable.querySelectorAll('th[data-sort]');
+    let currentSort: string | null = null;
+    let currentDirection: 'asc' | 'desc' = 'asc';
+
+    function parseTime(timeStr: string): number {
+      if (timeStr === '-') return Infinity;
+
+      // Parse time format like "1:29.563" or "1:30.055"
+      const parts = timeStr.split(':');
+      if (parts.length !== 2) return Infinity;
+
+      const minutes = parseInt(parts[0]);
+      const seconds = parseFloat(parts[1]);
+
+      return minutes * 60 + seconds;
+    }
+
+    function sortTable(column: string) {
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+
+      // Toggle direction if clicking the same column
+      if (currentSort === column) {
+        currentDirection = currentDirection === 'asc' ? 'desc' : 'asc';
+      } else {
+        currentDirection = 'asc';
+        currentSort = column;
+      }
+
+      // Sort rows
+      rows.sort((a, b) => {
+        const aTime = (a as HTMLElement).dataset[column] || '-';
+        const bTime = (b as HTMLElement).dataset[column] || '-';
+
+        const aValue = parseTime(aTime);
+        const bValue = parseTime(bTime);
+
+        return currentDirection === 'asc' ? aValue - bValue : bValue - aValue;
+      });
+
+      // Update position numbers
+      rows.forEach((row, index) => {
+        const posCell = row.querySelector('.position-cell');
+        if (posCell) {
+          posCell.textContent = (index + 1).toString();
+        }
+      });
+
+      // Clear and re-append rows
+      tbody.innerHTML = '';
+      rows.forEach(row => tbody.appendChild(row));
+
+      // Update sort indicators
+      sortHeaders.forEach(header => {
+        const indicator = header.querySelector('.sort-indicator');
+        if (!indicator) return;
+
+        if (header.getAttribute('data-sort') === column) {
+          indicator.classList.remove('opacity-0');
+          indicator.textContent = currentDirection === 'asc' ? '▲' : '▼';
+        } else {
+          indicator.classList.add('opacity-0');
+        }
+      });
+    }
+
+    // Add click handlers to sortable headers
+    sortHeaders.forEach(header => {
+      header.addEventListener('click', () => {
+        const column = header.getAttribute('data-sort');
+        if (column) {
+          sortTable(column);
+        }
+      });
+    });
+
+    // Add hover tooltips for lap counts
+    const timeCells = practiceTable.querySelectorAll('.practice-time-cell');
+    let tooltip: HTMLElement | null = null;
+
+    timeCells.forEach(cell => {
+      cell.addEventListener('mouseenter', (e) => {
+        const laps = (cell as HTMLElement).dataset.laps;
+        const timeText = (cell as HTMLElement).textContent?.trim();
+
+        // Only show tooltip if there's a valid time and lap count
+        if (!laps || laps === '0' || timeText === '-') return;
+
+        // Create tooltip
+        tooltip = document.createElement('div');
+        tooltip.className = 'practice-tooltip';
+        tooltip.textContent = `${laps} laps`;
+        document.body.appendChild(tooltip);
+
+        // Position tooltip
+        const rect = (cell as HTMLElement).getBoundingClientRect();
+        tooltip.style.position = 'fixed';
+        tooltip.style.left = `${rect.left + rect.width / 2}px`;
+        tooltip.style.top = `${rect.top - 35}px`;
+        tooltip.style.transform = 'translateX(-50%)';
+        tooltip.style.backgroundColor = '#1f2937';
+        tooltip.style.color = '#e5e7eb';
+        tooltip.style.padding = '4px 8px';
+        tooltip.style.borderRadius = '4px';
+        tooltip.style.fontSize = '12px';
+        tooltip.style.fontWeight = '500';
+        tooltip.style.border = '1px solid #374151';
+        tooltip.style.zIndex = '9999';
+        tooltip.style.pointerEvents = 'none';
+        tooltip.style.whiteSpace = 'nowrap';
+      });
+
+      cell.addEventListener('mouseleave', () => {
+        if (tooltip) {
+          tooltip.remove();
+          tooltip = null;
+        }
+      });
+    });
+  });
+</script>

@@ -698,11 +698,21 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
 
                 def load_session_from_db(session_name):
                     cursor.execute("""
-                        SELECT driver_abbreviation as driver, driver_number, team, lap_time,
-                               sector1_time, sector2_time, sector3_time
-                        FROM fastf1_qualifying_results
-                        WHERE year = ? AND round_number = ? AND session_name = ?
-                        ORDER BY lap_time
+                        SELECT
+                            fqr.driver_abbreviation as driver,
+                            fqr.driver_number,
+                            fqr.team,
+                            fqr.lap_time,
+                            fqr.sector1_time,
+                            fqr.sector2_time,
+                            fqr.sector3_time,
+                            d.id as driver_id,
+                            t.color as team_color
+                        FROM fastf1_qualifying_results fqr
+                        LEFT JOIN drivers d ON fqr.driver_abbreviation = d.abbreviation
+                        LEFT JOIN teams t ON fqr.team = t.display_name
+                        WHERE fqr.year = ? AND fqr.round_number = ? AND fqr.session_name = ?
+                        ORDER BY fqr.lap_time
                     """, (year, round_number, session_name))
                     return [dict(row) for row in cursor.fetchall()]
 
@@ -732,6 +742,16 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                     fastest = driver_laps.loc[driver_laps['LapTime'].idxmin()] if not driver_laps['LapTime'].isna().all() else None
 
                     if fastest is not None:
+                        # Get driver_id and team_color from database
+                        cursor.execute("""
+                            SELECT d.id as driver_id, t.color as team_color
+                            FROM drivers d
+                            LEFT JOIN teams t ON t.display_name = ?
+                            WHERE d.abbreviation = ?
+                            LIMIT 1
+                        """, (fastest['Team'], fastest['Driver']))
+                        db_info = cursor.fetchone()
+
                         result = {
                             'driver': fastest['Driver'],
                             'driver_number': int(fastest['DriverNumber']),
@@ -740,6 +760,8 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                             'sector1_time': format_timedelta(fastest['Sector1Time']),
                             'sector2_time': format_timedelta(fastest['Sector2Time']),
                             'sector3_time': format_timedelta(fastest['Sector3Time']),
+                            'driver_id': db_info['driver_id'] if db_info else None,
+                            'team_color': db_info['team_color'] if db_info else None,
                         }
                         results.append(result)
 
@@ -808,10 +830,19 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
 
                 def load_session_from_db(session_name):
                     cursor.execute("""
-                        SELECT driver_abbreviation as driver, driver_number, team, lap_time, laps_completed
-                        FROM fastf1_practice_results
-                        WHERE year = ? AND round_number = ? AND session_name = ?
-                        ORDER BY lap_time
+                        SELECT
+                            fpr.driver_abbreviation as driver,
+                            fpr.driver_number,
+                            fpr.team,
+                            fpr.lap_time,
+                            fpr.laps_completed,
+                            d.id as driver_id,
+                            t.color as team_color
+                        FROM fastf1_practice_results fpr
+                        LEFT JOIN drivers d ON fpr.driver_abbreviation = d.abbreviation
+                        LEFT JOIN teams t ON fpr.team = t.display_name
+                        WHERE fpr.year = ? AND fpr.round_number = ? AND fpr.session_name = ?
+                        ORDER BY fpr.lap_time
                     """, (year, round_number, session_name))
                     return [dict(row) for row in cursor.fetchall()]
 
@@ -839,12 +870,24 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                         fastest = driver_laps.loc[driver_laps['LapTime'].idxmin()] if not driver_laps['LapTime'].isna().all() else None
 
                         if fastest is not None:
+                            # Get driver_id and team_color from database
+                            cursor.execute("""
+                                SELECT d.id as driver_id, t.color as team_color
+                                FROM drivers d
+                                LEFT JOIN teams t ON t.display_name = ?
+                                WHERE d.abbreviation = ?
+                                LIMIT 1
+                            """, (fastest['Team'], fastest['Driver']))
+                            db_info = cursor.fetchone()
+
                             result = {
                                 'driver': fastest['Driver'],
                                 'driver_number': int(fastest['DriverNumber']),
                                 'team': fastest['Team'],
                                 'lap_time': format_timedelta(fastest['LapTime']),
                                 'laps_completed': int(len(driver_laps)),
+                                'driver_id': db_info['driver_id'] if db_info else None,
+                                'team_color': db_info['team_color'] if db_info else None,
                             }
                             session_results.append(result)
 
@@ -908,11 +951,21 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                 # Load from database
                 logger.info(f"Loading sprint data from database for {year} round {round_number}")
                 cursor.execute("""
-                    SELECT driver_abbreviation as driver, driver_number, team, position,
-                           grid_position, points, status
-                    FROM fastf1_sprint_results
-                    WHERE year = ? AND round_number = ?
-                    ORDER BY position
+                    SELECT
+                        fsr.driver_abbreviation as driver,
+                        fsr.driver_number,
+                        fsr.team,
+                        fsr.position,
+                        fsr.grid_position,
+                        fsr.points,
+                        fsr.status,
+                        d.id as driver_id,
+                        t.color as team_color
+                    FROM fastf1_sprint_results fsr
+                    LEFT JOIN drivers d ON fsr.driver_abbreviation = d.abbreviation
+                    LEFT JOIN teams t ON fsr.team = t.display_name
+                    WHERE fsr.year = ? AND fsr.round_number = ?
+                    ORDER BY fsr.position
                 """, (year, round_number))
 
                 sprint_results = [dict(row) for row in cursor.fetchall()]
@@ -942,6 +995,16 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
 
             sprint_results = []
             for _, driver in results.iterrows():
+                # Get driver_id and team_color from database
+                cursor.execute("""
+                    SELECT d.id as driver_id, t.color as team_color
+                    FROM drivers d
+                    LEFT JOIN teams t ON t.display_name = ?
+                    WHERE d.abbreviation = ?
+                    LIMIT 1
+                """, (driver['TeamName'], driver['Abbreviation']))
+                db_info = cursor.fetchone()
+
                 result = {
                     'position': int(driver['Position']) if pd.notna(driver['Position']) else None,
                     'driver': driver['Abbreviation'],
@@ -950,6 +1013,8 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                     'grid_position': int(driver['GridPosition']) if pd.notna(driver['GridPosition']) else None,
                     'points': float(driver['Points']) if pd.notna(driver['Points']) else 0,
                     'status': driver['Status'] if pd.notna(driver['Status']) else 'Unknown',
+                    'driver_id': db_info['driver_id'] if db_info else None,
+                    'team_color': db_info['team_color'] if db_info else None,
                 }
                 sprint_results.append(result)
 
