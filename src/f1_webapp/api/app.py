@@ -709,7 +709,17 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                             d.id as driver_id,
                             t.color as team_color
                         FROM fastf1_qualifying_results fqr
-                        LEFT JOIN drivers d ON fqr.driver_abbreviation = d.abbreviation
+                        LEFT JOIN (
+                            SELECT abbreviation, id
+                            FROM drivers
+                            WHERE (abbreviation, active) IN (
+                                SELECT abbreviation, MAX(active)
+                                FROM drivers
+                                GROUP BY abbreviation
+                            )
+                            GROUP BY abbreviation
+                            HAVING id = MAX(id)
+                        ) d ON fqr.driver_abbreviation = d.abbreviation
                         LEFT JOIN teams t ON fqr.team = t.display_name
                         WHERE fqr.year = ? AND fqr.round_number = ? AND fqr.session_name = ?
                         ORDER BY fqr.lap_time
@@ -839,7 +849,17 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                             d.id as driver_id,
                             t.color as team_color
                         FROM fastf1_practice_results fpr
-                        LEFT JOIN drivers d ON fpr.driver_abbreviation = d.abbreviation
+                        LEFT JOIN (
+                            SELECT abbreviation, id
+                            FROM drivers
+                            WHERE (abbreviation, active) IN (
+                                SELECT abbreviation, MAX(active)
+                                FROM drivers
+                                GROUP BY abbreviation
+                            )
+                            GROUP BY abbreviation
+                            HAVING id = MAX(id)
+                        ) d ON fpr.driver_abbreviation = d.abbreviation
                         LEFT JOIN teams t ON fpr.team = t.display_name
                         WHERE fpr.year = ? AND fpr.round_number = ? AND fpr.session_name = ?
                         ORDER BY fpr.lap_time
@@ -962,7 +982,17 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
                         d.id as driver_id,
                         t.color as team_color
                     FROM fastf1_sprint_results fsr
-                    LEFT JOIN drivers d ON fsr.driver_abbreviation = d.abbreviation
+                    LEFT JOIN (
+                        SELECT abbreviation, id
+                        FROM drivers
+                        WHERE (abbreviation, active) IN (
+                            SELECT abbreviation, MAX(active)
+                            FROM drivers
+                            GROUP BY abbreviation
+                        )
+                        GROUP BY abbreviation
+                        HAVING id = MAX(id)
+                    ) d ON fsr.driver_abbreviation = d.abbreviation
                     LEFT JOIN teams t ON fsr.team = t.display_name
                     WHERE fsr.year = ? AND fsr.round_number = ?
                     ORDER BY fsr.position
