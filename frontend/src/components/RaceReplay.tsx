@@ -47,6 +47,20 @@ interface TelemetryData {
   drivers: DriverTelemetry[];
 }
 
+interface RaceMessage {
+  Time: string;
+  Category: string;
+  Message: string;
+  Flag?: string;
+  Scope?: string;
+  Lap?: number;
+  RacingNumber?: string;
+}
+
+interface SessionData {
+  race_control_messages: RaceMessage[];
+}
+
 interface RaceReplayProps {
   year: number;
   round: number;
@@ -55,6 +69,7 @@ interface RaceReplayProps {
 export default function RaceReplay({ year, round }: RaceReplayProps) {
   const [data, setData] = useState<RaceReplayData | null>(null);
   const [telemetryData, setTelemetryData] = useState<TelemetryData | null>(null);
+  const [sessionData, setSessionData] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(0); // Time in seconds from start
   const [isPlaying, setIsPlaying] = useState(false);
@@ -102,6 +117,16 @@ export default function RaceReplay({ year, round }: RaceReplayProps) {
       .catch(err => {
         console.error('Error loading telemetry data:', err);
         setLoading(false);
+      });
+
+    // Load session data for race control messages
+    fetch(`http://localhost:8000/fastf1/session-data/${year}/${round}/R`)
+      .then(res => res.json())
+      .then(sessionData => {
+        setSessionData(sessionData);
+      })
+      .catch(err => {
+        console.error('Error loading session data:', err);
       });
   }, [year, round]);
 
@@ -189,6 +214,67 @@ export default function RaceReplay({ year, round }: RaceReplayProps) {
     return lastLap ? lastLap.lapNumber : data.totalLaps;
   };
 
+  // Get current tire compound for a driver based on current lap
+  const getCurrentTireCompound = (driverAbbr: string): string | null => {
+    if (!data) return null;
+
+    const currentLapNum = getCurrentLap();
+    const driver = data.drivers.find(d => d.driver === driverAbbr);
+    if (!driver || !driver.positions) return null;
+
+    // Get the position data for the current lap (lap numbers are 1-indexed)
+    const lapPosition = driver.positions[currentLapNum - 1];
+    return lapPosition?.compound || null;
+  };
+
+  // Get gap information for drivers - comparing their lap and track progress
+  // Returns the lap number and approximate progress they're on
+  const getDriverProgressInfo = (driverTelemetry: DriverTelemetry) => {
+    if (driverTelemetry.lapBoundaries.length === 0) return null;
+
+    const totalPositions = driverTelemetry.positions.length;
+
+    // Find which lap the driver is in
+    let currentLapBoundary = null;
+    let nextLapBoundary = null;
+    let lapIndex = -1;
+
+    for (let i = 0; i < driverTelemetry.lapBoundaries.length; i++) {
+      const lap = driverTelemetry.lapBoundaries[i];
+      const lapEndTime = lap.cumulativeTime + lap.lapTime;
+
+      if (currentTime >= lap.cumulativeTime && currentTime < lapEndTime) {
+        currentLapBoundary = lap;
+        nextLapBoundary = driverTelemetry.lapBoundaries[i + 1] || null;
+        lapIndex = i;
+        break;
+      }
+    }
+
+    // If beyond all laps
+    if (!currentLapBoundary) {
+      const lastLap = driverTelemetry.lapBoundaries[driverTelemetry.lapBoundaries.length - 1];
+      if (!lastLap) return null;
+      return {
+        lapNumber: lastLap.lapNumber,
+        lapIndex: driverTelemetry.lapBoundaries.length - 1,
+        progress: 1.0, // 100% of lap complete
+        totalTime: lastLap.cumulativeTime + lastLap.lapTime
+      };
+    }
+
+    // Calculate progress within current lap
+    const timeIntoLap = currentTime - currentLapBoundary.cumulativeTime;
+    const lapProgress = timeIntoLap / currentLapBoundary.lapTime;
+
+    return {
+      lapNumber: currentLapBoundary.lapNumber,
+      lapIndex: lapIndex,
+      progress: lapProgress,
+      totalTime: currentLapBoundary.cumulativeTime + timeIntoLap
+    };
+  };
+
   // Get driver position at current time using race time synchronization
   const getDriverPosition = (driverTelemetry: DriverTelemetry) => {
     const totalPositions = driverTelemetry.positions.length;
@@ -225,7 +311,7 @@ export default function RaceReplay({ year, round }: RaceReplayProps) {
 
     // Calculate progress within current lap based on actual time elapsed
     const timeIntoLap = currentTime - currentLapBoundary.cumulativeTime;
-    const lapProgress = Math.min(timeIntoLap / currentLapBoundary.lapTime, 1.0);
+    const lapProgress = timeIntoLap / currentLapBoundary.lapTime;
 
     // Find the end index for this lap's position data
     const endIndex = nextLapBoundary ? nextLapBoundary.startIndex : totalPositions;
@@ -233,15 +319,31 @@ export default function RaceReplay({ year, round }: RaceReplayProps) {
     // Calculate exact position within this lap (with decimal for interpolation)
     const lapLength = endIndex - currentLapBoundary.startIndex;
     const exactPositionInLap = lapProgress * lapLength;
-    const positionIndex = Math.min(currentLapBoundary.startIndex + Math.floor(exactPositionInLap), endIndex - 1);
-    const nextPositionIndex = Math.min(positionIndex + 1, endIndex - 1);
+    const positionIndex = Math.floor(currentLapBoundary.startIndex + exactPositionInLap);
 
-    // Get the two points to interpolate between
-    const currentPoint = driverTelemetry.positions[positionIndex];
-    const nextPoint = driverTelemetry.positions[nextPositionIndex];
+    // Handle interpolation, including across lap boundaries
+    let currentPoint, nextPoint;
+    let t; // interpolation factor
 
-    // Calculate interpolation factor (0 to 1 between current and next point)
-    const t = exactPositionInLap - Math.floor(exactPositionInLap);
+    if (positionIndex >= endIndex - 1) {
+      // We're at the end of this lap, interpolate to the start of next lap if available
+      currentPoint = driverTelemetry.positions[endIndex - 1];
+      if (nextLapBoundary && nextLapBoundary.startIndex < totalPositions) {
+        // Interpolate to first point of next lap
+        nextPoint = driverTelemetry.positions[nextLapBoundary.startIndex];
+        // Calculate how far past the end we are (0 to 1)
+        t = exactPositionInLap - (endIndex - currentLapBoundary.startIndex - 1);
+      } else {
+        // No next lap, stay at the last position
+        nextPoint = currentPoint;
+        t = 0;
+      }
+    } else {
+      // Normal interpolation within the lap
+      currentPoint = driverTelemetry.positions[positionIndex];
+      nextPoint = driverTelemetry.positions[positionIndex + 1];
+      t = exactPositionInLap - Math.floor(exactPositionInLap);
+    }
 
     // Linear interpolation between points for smooth movement
     const interpolatedX = currentPoint.x + (nextPoint.x - currentPoint.x) * t;
@@ -311,13 +413,174 @@ export default function RaceReplay({ year, round }: RaceReplayProps) {
 
   const trackBounds = getTrackBounds();
 
+  // Get relevant race messages for current time (show messages from last 30 seconds)
+  const getRelevantMessages = (): RaceMessage[] => {
+    if (!sessionData || !sessionData.race_control_messages) return [];
+
+    // Convert current lap to approximate race time for filtering
+    const currentLapNum = getCurrentLap();
+
+    // Filter messages by lap - show messages from current lap and previous lap
+    return sessionData.race_control_messages
+      .filter(msg => {
+        if (!msg.Lap) return true; // Include messages without lap info
+        return msg.Lap >= currentLapNum - 1 && msg.Lap <= currentLapNum;
+      })
+      .slice(-5); // Show last 5 messages
+  };
+
+  const relevantMessages = getRelevantMessages();
+
   return (
     <div className="space-y-6">
       {/* Track Map Visualization */}
       {telemetryData && trackBounds && (
         <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
           <h3 className="text-xl font-bold mb-4">Track Map - Lap {currentLap}</h3>
-          <div className="bg-gray-800/50 rounded-lg p-4">
+          <div className="bg-gray-800/50 rounded-lg p-4 relative">
+            {/* Live Race Order Overlay */}
+            <div className="absolute top-4 left-4 bg-gray-900/90 backdrop-blur-sm border border-gray-700 rounded-lg p-3 z-10">
+              <h4 className="text-sm font-bold text-gray-300 mb-2 uppercase tracking-wide">Live Order</h4>
+              <div className="space-y-1">
+                {telemetryData.drivers
+                  .map(driverTelemetry => {
+                    const driverPos = getDriverPosition(driverTelemetry);
+                    const progressInfo = getDriverProgressInfo(driverTelemetry);
+                    const compound = getCurrentTireCompound(driverTelemetry.driver);
+                    return {
+                      driver: driverTelemetry.driver,
+                      color: driverTelemetry.color,
+                      position: driverPos?.position || 999,
+                      progressInfo: progressInfo,
+                      compound: compound,
+                      telemetry: driverTelemetry
+                    };
+                  })
+                  .sort((a, b) => a.position - b.position)
+                  .map((driver, index, sortedDrivers) => {
+                    // Calculate time gap to driver ahead based on total race time
+                    let timeGap = null;
+                    if (index > 0 && driver.progressInfo && sortedDrivers[index - 1].progressInfo) {
+                      const gap = driver.progressInfo.totalTime - sortedDrivers[index - 1].progressInfo.totalTime;
+                      timeGap = gap;
+                    }
+
+                    // Tire compound color mapping
+                    const tireColors: { [key: string]: string } = {
+                      'SOFT': '#ff0000',
+                      'MEDIUM': '#ffff00',
+                      'HARD': '#ffffff',
+                      'INTERMEDIATE': '#00ff00',
+                      'WET': '#0000ff'
+                    };
+
+                    // Get first letter of compound
+                    const compoundLetter = driver.compound ? driver.compound.charAt(0).toUpperCase() : '';
+
+                    return (
+                      <div key={driver.driver} className="flex items-center gap-2 text-xs">
+                        <span className="w-5 text-right font-bold text-gray-400">{driver.position}</span>
+                        <div
+                          className="w-2 h-2 rounded-full"
+                          style={{ backgroundColor: driver.color }}
+                        />
+                        <span className="font-medium text-white w-8">{driver.driver}</span>
+                        <div className="w-4 flex items-center justify-center">
+                          {driver.compound && (
+                            <div
+                              className="w-4 h-4 rounded-full border border-gray-600 flex items-center justify-center"
+                              style={{ backgroundColor: tireColors[driver.compound.toUpperCase()] || '#999' }}
+                              title={driver.compound}
+                            >
+                              <span className="text-[8px] font-bold text-black">
+                                {compoundLetter}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        {timeGap !== null && timeGap > 0.1 && (
+                          <span className="text-gray-500 ml-auto font-mono">
+                            +{timeGap.toFixed(1)}s
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })
+                }
+              </div>
+            </div>
+
+            {/* Race Messages Overlay */}
+            {relevantMessages.length > 0 && (
+              <div className="absolute top-4 right-4 bg-gray-900/90 backdrop-blur-sm border border-gray-700 rounded-lg p-3 z-10 max-w-sm">
+                <h4 className="text-sm font-bold text-gray-300 mb-2 uppercase tracking-wide">Race Control</h4>
+                <div className="space-y-2">
+                  {relevantMessages.map((msg, index) => {
+                    // Determine flag color
+                    let flagColor = 'border-gray-500';
+
+                    if (msg.Flag === 'YELLOW' || msg.Category === 'Flag' && msg.Message.includes('YELLOW')) {
+                      flagColor = 'border-yellow-400';
+                    } else if (msg.Flag === 'RED' || msg.Category === 'Flag' && msg.Message.includes('RED')) {
+                      flagColor = 'border-red-500';
+                    } else if (msg.Flag === 'GREEN' || msg.Category === 'Flag' && msg.Message.includes('GREEN')) {
+                      flagColor = 'border-green-400';
+                    } else if (msg.Flag === 'BLUE' || msg.Message.includes('BLUE FLAG')) {
+                      flagColor = 'border-blue-400';
+                    } else if (msg.Message.includes('SAFETY CAR')) {
+                      flagColor = 'border-yellow-400';
+                    }
+
+                    return (
+                      <div
+                        key={`${msg.Time}-${index}`}
+                        className={`border-l-2 ${flagColor} pl-2 py-1`}
+                      >
+                        <p className="text-xs text-white leading-tight">{msg.Message}</p>
+                        {msg.Lap && (
+                          <span className="text-[10px] text-gray-400">Lap {msg.Lap}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Flag Status Indicator */}
+            {(() => {
+              // Determine current flag status from most recent message
+              let currentFlag = 'GREEN';
+              let flagBg = 'bg-green-500';
+
+              if (relevantMessages.length > 0) {
+                const latestMsg = relevantMessages[relevantMessages.length - 1];
+                if (latestMsg.Flag === 'YELLOW' || latestMsg.Message.includes('YELLOW') || latestMsg.Message.includes('SAFETY CAR')) {
+                  currentFlag = 'YELLOW';
+                  flagBg = 'bg-yellow-400';
+                } else if (latestMsg.Flag === 'RED' || latestMsg.Message.includes('RED FLAG')) {
+                  currentFlag = 'RED';
+                  flagBg = 'bg-red-500';
+                } else if (latestMsg.Flag === 'GREEN' || latestMsg.Message.includes('GREEN')) {
+                  currentFlag = 'GREEN';
+                  flagBg = 'bg-green-500';
+                }
+              }
+
+              const isYellow = currentFlag === 'YELLOW';
+
+              return (
+                <div className="absolute bottom-4 right-4 bg-gray-900/90 backdrop-blur-sm border border-gray-700 rounded-lg p-3 z-10">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`w-6 h-6 rounded ${flagBg} ${isYellow ? 'yellow-light-flash' : ''}`}
+                    />
+                    <span className="text-sm font-bold text-gray-300">{currentFlag} FLAG</span>
+                  </div>
+                </div>
+              );
+            })()}
+
             <svg
               viewBox={`${trackBounds.minX} ${trackBounds.minY} ${trackBounds.width} ${trackBounds.height}`}
               className="w-full h-auto"
@@ -507,4 +770,32 @@ export default function RaceReplay({ year, round }: RaceReplayProps) {
       </div>
     </div>
   );
+}
+
+// Add CSS for yellow flag flashing animation
+if (typeof document !== 'undefined') {
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes yellowFlash {
+      0%, 100% { opacity: 1; background-color: rgb(250, 204, 21); }
+      50% { opacity: 0.3; background-color: rgb(250, 204, 21, 0.3); }
+    }
+
+    @keyframes yellowBorderFlash {
+      0%, 100% { border-color: rgb(250, 204, 21); }
+      50% { border-color: rgb(250, 204, 21, 0.5); }
+    }
+
+    .yellow-light-flash {
+      animation: yellowFlash 1s ease-in-out infinite;
+    }
+
+    .yellow-flag-flash {
+      animation: yellowBorderFlash 1s ease-in-out infinite;
+    }
+  `;
+  if (!document.getElementById('race-replay-styles')) {
+    style.id = 'race-replay-styles';
+    document.head.appendChild(style);
+  }
 }
