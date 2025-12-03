@@ -1,6 +1,7 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import { getRaceResults, getQualifyingResults, getPracticeResults, getSprintResults, getSessionData } from '../lib/api';
+import RaceReplay from '../components/RaceReplay';
 
 // Get the year, round, and session from URL params
 const url = new URL(Astro.request.url);
@@ -61,6 +62,7 @@ if (session === 'qualifying' || session === 'sprint-qualifying') {
 // Define available tabs dynamically based on weekend format
 const tabs = [
   { id: 'race', label: 'Race', icon: '🏁' },
+  { id: 'replay', label: 'Replay', icon: '🎬' },
   ...(isSprintWeekend
     ? [
         { id: 'sprint-qualifying', label: 'Sprint Qualifying', icon: '🏃' },
@@ -318,6 +320,11 @@ if (practiceData) {
         </tbody>
       </table>
     </div>
+    )}
+
+    <!-- Race Replay Tab -->
+    {session === 'replay' && (
+      <RaceReplay year={year} round={round} client:load />
     )}
 
     <!-- Qualifying Tab (Main Race or Sprint Qualifying) -->

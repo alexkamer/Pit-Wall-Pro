@@ -1134,6 +1134,390 @@ def create_app(cache_dir: str = "./f1_cache") -> FastAPI:
             logger.error(f"Error getting session data: {e}")
             raise HTTPException(500, str(e))
 
+    @app.get("/fastf1/race-replay/{year}/{round_number}")
+    def get_race_replay_data(year: int, round_number: int, include_track: bool = False):
+        """Get lap-by-lap position data for race replay visualization.
+
+        Args:
+            year: Championship year
+            round_number: Race round number
+            include_track: Include track position coordinates (X, Y) for track map visualization
+
+        Returns:
+            Lap-by-lap position data for all drivers with team colors
+        """
+        import sqlite3
+        try:
+            # Load session with or without telemetry based on track map requirement
+            session = ff1.load_session(year, round_number, 'R',
+                                      telemetry=include_track,
+                                      weather=False, messages=False)
+
+            # Get lap data
+            laps_df = session.laps
+
+            if laps_df is None or laps_df.empty:
+                return json_safe({'error': 'No lap data available', 'drivers': [], 'totalLaps': 0})
+
+            # Get driver colors from database
+            import os
+            db_path = os.path.join(os.path.dirname(__file__), '../../../f1_data.db')
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT d.abbreviation, t.color, t.display_name as team_name
+                FROM session_results sr
+                JOIN drivers d ON sr.driver_id = d.id
+                JOIN teams t ON sr.team_id = t.id
+                JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                WHERE r.year = ? AND r.round_number = ? AND rs.session_type = 'Race'
+            """, (year, round_number))
+
+            driver_colors = {}
+            driver_teams = {}
+            for row in cursor.fetchall():
+                driver_colors[row['abbreviation']] = row['color']
+                driver_teams[row['abbreviation']] = row['team_name']
+
+            conn.close()
+
+            # Get unique drivers
+            drivers = laps_df['Driver'].unique()
+            max_lap = int(laps_df['LapNumber'].max())
+
+            # Build driver data structure
+            driver_data = []
+            for driver in drivers:
+                driver_laps = laps_df[laps_df['Driver'] == driver].sort_values('LapNumber')
+
+                # Extract lap-by-lap positions
+                positions = []
+                for lap_num in range(1, max_lap + 1):
+                    lap_data = driver_laps[driver_laps['LapNumber'] == lap_num]
+                    if not lap_data.empty:
+                        position = lap_data.iloc[0]['Position']
+                        lap_time = lap_data.iloc[0]['LapTime']
+                        positions.append({
+                            'lap': lap_num,
+                            'position': int(position) if pd.notna(position) else None,
+                            'lapTime': format_timedelta(lap_time) if pd.notna(lap_time) else None,
+                            'compound': lap_data.iloc[0]['Compound'] if pd.notna(lap_data.iloc[0]['Compound']) else None,
+                        })
+                    else:
+                        # Driver didn't complete this lap (DNF)
+                        positions.append({
+                            'lap': lap_num,
+                            'position': None,
+                            'lapTime': None,
+                            'compound': None,
+                        })
+
+                driver_data.append({
+                    'driver': driver,
+                    'team': driver_teams.get(driver, 'Unknown'),
+                    'color': driver_colors.get(driver, '#999999'),
+                    'positions': positions
+                })
+
+            # Sort drivers by final position
+            driver_data.sort(key=lambda x: x['positions'][-1]['position'] if x['positions'] and x['positions'][-1]['position'] else 999)
+
+            return json_safe({
+                'year': year,
+                'roundNumber': round_number,
+                'totalLaps': max_lap,
+                'drivers': driver_data
+            })
+
+        except Exception as e:
+            logger.error(f"Error getting race replay data: {e}")
+            raise HTTPException(500, str(e))
+
+    @app.get("/fastf1/track-map/{year}/{round_number}")
+    def get_track_map_data(year: int, round_number: int, lap_number: int = 10):
+        """Get track map coordinates and driver positions for visualization.
+
+        Args:
+            year: Championship year
+            round_number: Race round number
+            lap_number: Lap number to show driver positions (default: 10)
+
+        Returns:
+            Track coordinates (X, Y) for drawing the circuit and driver positions
+        """
+        import sqlite3
+        try:
+            session = ff1.load_session(year, round_number, 'R', telemetry=True, weather=False, messages=False)
+
+            # Get a reference lap (ideally from the leader on a clean lap)
+            laps_df = session.laps
+
+            # Try to get lap from race leader for track outline
+            leader_laps = laps_df[laps_df['Position'] == 1]
+            if not leader_laps.empty:
+                reference_lap = leader_laps[leader_laps['LapNumber'] == 10]  # Always use lap 10 for track outline
+                if reference_lap.empty:
+                    reference_lap = leader_laps.iloc[0:1]
+            else:
+                reference_lap = laps_df[laps_df['LapNumber'] == 10].iloc[0:1]
+
+            if reference_lap.empty:
+                return json_safe({'error': 'No lap data available', 'track': [], 'drivers': []})
+
+            # Get position data for the track outline
+            lap = reference_lap.iloc[0]
+            pos_data = lap.get_pos_data()
+
+            # Subsample to reduce data size (every 10th point)
+            pos_data_sampled = pos_data[::10]
+
+            # Extract X, Y coordinates for track
+            track_coords = [
+                {'x': float(row['X']), 'y': float(row['Y'])}
+                for _, row in pos_data_sampled.iterrows()
+                if pd.notna(row['X']) and pd.notna(row['Y'])
+            ]
+
+            # Get driver colors from database
+            import os
+            db_path = os.path.join(os.path.dirname(__file__), '../../../f1_data.db')
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT d.abbreviation, t.color, t.display_name as team_name
+                FROM session_results sr
+                JOIN drivers d ON sr.driver_id = d.id
+                JOIN teams t ON sr.team_id = t.id
+                JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                WHERE r.year = ? AND r.round_number = ? AND rs.session_type = 'Race'
+            """, (year, round_number))
+
+            driver_colors = {}
+            for row in cursor.fetchall():
+                driver_colors[row['abbreviation']] = row['color']
+
+            conn.close()
+
+            # Get driver positions for the specified lap
+            driver_positions = []
+            lap_laps = laps_df[laps_df['LapNumber'] == lap_number]
+
+            for _, lap_row in lap_laps.iterrows():
+                try:
+                    driver = lap_row['Driver']
+                    position = lap_row['Position']
+
+                    if pd.notna(position):
+                        # Get position data for this driver's lap
+                        driver_pos_data = lap_row.get_pos_data()
+
+                        # Sample at the middle of the lap to get a representative position
+                        mid_index = len(driver_pos_data) // 2
+                        if mid_index < len(driver_pos_data):
+                            mid_point = driver_pos_data.iloc[mid_index]
+
+                            if pd.notna(mid_point['X']) and pd.notna(mid_point['Y']):
+                                driver_positions.append({
+                                    'driver': driver,
+                                    'position': int(position),
+                                    'x': float(mid_point['X']),
+                                    'y': float(mid_point['Y']),
+                                    'color': driver_colors.get(driver, '#999999')
+                                })
+                except Exception as e:
+                    logger.warning(f"Could not get position for driver {driver}: {e}")
+                    continue
+
+            # Sort by position
+            driver_positions.sort(key=lambda x: x['position'])
+
+            return json_safe({
+                'year': year,
+                'roundNumber': round_number,
+                'lapNumber': lap_number,
+                'track': track_coords,
+                'drivers': driver_positions
+            })
+
+        except Exception as e:
+            logger.error(f"Error getting track map data: {e}")
+            raise HTTPException(500, str(e))
+
+    @app.get("/fastf1/race-telemetry/{year}/{round_number}")
+    def get_race_telemetry_data(year: int, round_number: int):
+        """Get full race telemetry with position data for smooth animation.
+
+        Args:
+            year: Championship year
+            round_number: Race round number
+
+        Returns:
+            Complete telemetry position data for all drivers throughout the race
+        """
+        import sqlite3
+        try:
+            session = ff1.load_session(year, round_number, 'R', telemetry=True, weather=False, messages=False)
+
+            # Get track outline and pit lane
+            laps_df = session.laps
+
+            # Get a clean racing lap (no pit stops) from the leader for main track
+            leader_laps = laps_df[laps_df['Position'] == 1]
+            if not leader_laps.empty:
+                # Find a lap where the leader didn't pit
+                clean_laps = leader_laps[leader_laps['PitOutTime'].isna() & leader_laps['PitInTime'].isna()]
+                if not clean_laps.empty:
+                    reference_lap = clean_laps.iloc[0:1]
+                else:
+                    reference_lap = leader_laps.iloc[0:1]
+            else:
+                reference_lap = laps_df.iloc[0:1]
+
+            if reference_lap.empty:
+                return json_safe({'error': 'No lap data available', 'track': [], 'pitlane': [], 'drivers': []})
+
+            # Get main track coordinates (racing line)
+            lap = reference_lap.iloc[0]
+            pos_data = lap.get_pos_data()
+            # Use every 2nd point for a complete track outline
+            pos_data_sampled = pos_data[::2]
+
+            track_coords = [
+                {'x': float(row['X']), 'y': float(row['Y'])}
+                for _, row in pos_data_sampled.iterrows()
+                if pd.notna(row['X']) and pd.notna(row['Y'])
+            ]
+
+            # Close the track loop by adding the first point at the end
+            if track_coords and len(track_coords) > 0:
+                track_coords.append(track_coords[0])
+
+            # Get pit lane coordinates from a lap where someone pitted
+            pitlane_coords = []
+            try:
+                pit_laps = laps_df[laps_df['PitInTime'].notna()]
+                if not pit_laps.empty:
+                    pit_lap = pit_laps.iloc[0]
+                    pit_pos_data = pit_lap.get_pos_data()
+
+                    # Sample pit lane data
+                    pit_pos_sampled = pit_pos_data[::2]
+
+                    all_pit_coords = [
+                        {'x': float(row['X']), 'y': float(row['Y'])}
+                        for _, row in pit_pos_sampled.iterrows()
+                        if pd.notna(row['X']) and pd.notna(row['Y'])
+                    ]
+
+                    # Extract just the pit lane section by finding points that deviate from main track
+                    # This is a simplified approach - in reality you'd need more sophisticated filtering
+                    pitlane_coords = all_pit_coords
+            except Exception as e:
+                logger.warning(f"Could not extract pit lane coordinates: {e}")
+
+            # Get driver colors from database
+            import os
+            db_path = os.path.join(os.path.dirname(__file__), '../../../f1_data.db')
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT d.abbreviation, t.color, t.display_name as team_name
+                FROM session_results sr
+                JOIN drivers d ON sr.driver_id = d.id
+                JOIN teams t ON sr.team_id = t.id
+                JOIN race_sessions rs ON sr.session_espn_competition_id = rs.espn_competition_id
+                JOIN races r ON rs.race_espn_event_id = r.espn_event_id
+                WHERE r.year = ? AND r.round_number = ? AND rs.session_type = 'Race'
+            """, (year, round_number))
+
+            driver_colors = {}
+            for row in cursor.fetchall():
+                driver_colors[row['abbreviation']] = row['color']
+
+            conn.close()
+
+            # Get telemetry data for all drivers
+            drivers_telemetry = []
+
+            for driver_abbr in laps_df['Driver'].unique():
+                try:
+                    driver_laps = laps_df[laps_df['Driver'] == driver_abbr].sort_values('LapNumber')
+
+                    # Collect all position data for this driver across all laps
+                    all_positions = []
+                    lap_boundaries = []  # Track where each lap starts
+                    cumulative_time = 0.0  # Track cumulative race time in seconds
+
+                    for _, lap_row in driver_laps.iterrows():
+                        lap_num = int(lap_row['LapNumber'])
+                        position = lap_row['Position']
+                        lap_time = lap_row['LapTime']
+
+                        if pd.notna(position):
+                            try:
+                                # Get position data for this lap
+                                lap_pos_data = lap_row.get_pos_data()
+
+                                # Sample every 5th point to reduce data size while keeping smooth animation
+                                lap_pos_data_sampled = lap_pos_data[::5]
+
+                                # Calculate lap time in seconds
+                                lap_time_seconds = lap_time.total_seconds() if pd.notna(lap_time) else 90.0  # Default to 90s if missing
+
+                                lap_boundaries.append({
+                                    'lapNumber': lap_num,
+                                    'startIndex': len(all_positions),
+                                    'position': int(position),
+                                    'cumulativeTime': cumulative_time,  # Race time at start of this lap
+                                    'lapTime': lap_time_seconds  # Duration of this lap in seconds
+                                })
+
+                                # Update cumulative time for next lap
+                                cumulative_time += lap_time_seconds
+
+                                # Add all position points for this lap
+                                for _, point in lap_pos_data_sampled.iterrows():
+                                    if pd.notna(point['X']) and pd.notna(point['Y']):
+                                        all_positions.append({
+                                            'x': float(point['X']),
+                                            'y': float(point['Y'])
+                                        })
+                            except Exception as e:
+                                logger.warning(f"Could not get telemetry for {driver_abbr} lap {lap_num}: {e}")
+                                continue
+
+                    if all_positions:
+                        drivers_telemetry.append({
+                            'driver': driver_abbr,
+                            'color': driver_colors.get(driver_abbr, '#999999'),
+                            'positions': all_positions,
+                            'lapBoundaries': lap_boundaries
+                        })
+
+                except Exception as e:
+                    logger.warning(f"Could not process driver {driver_abbr}: {e}")
+                    continue
+
+            return json_safe({
+                'year': year,
+                'roundNumber': round_number,
+                'track': track_coords,
+                'pitlane': pitlane_coords,
+                'drivers': drivers_telemetry
+            })
+
+        except Exception as e:
+            logger.error(f"Error getting race telemetry data: {e}")
+            raise HTTPException(500, str(e))
+
     @app.get("/drivers")
     def search_drivers(query: Optional[str] = None, limit: int = 50):
         """Search for drivers across all seasons.
